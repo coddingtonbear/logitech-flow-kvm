@@ -72,7 +72,9 @@ setup(
     ],
     python_requires='>=3.6',
     install_requires=[
-        # eg: 'aspectlib==1.1.1', 'six>=1.7',
+        'solaar>=1.1.8,<2.0',
+        'hid_parser==0.0.3',
+        'safdie>=2.0.1,<3.0',
     ],
     extras_require={
         # eg:
@@ -85,6 +87,9 @@ setup(
     entry_points={
         'console_scripts': [
             'logitech-flow-kvm = logitech_flow_kvm.cli:main',
-        ]
+        ],
+        'logitech_flow_kvm.commands': [
+            "list-devices = logitech_flow_kvm.commands.list_devices:ListDevices"
+        ],
     },
 )
