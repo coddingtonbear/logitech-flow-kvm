@@ -1,0 +1,17 @@
+graft docs
+graft src
+graft ci
+graft tests
+
+include .bumpversion.cfg
+include .cookiecutterrc
+include .coveragerc
+include .editorconfig
+include tox.ini
+include .readthedocs.yml
+include .pre-commit-config.yaml
+include LICENSE
+include README.md
+
+
+global-exclude *.py[cod] __pycache__/* *.so *.dylib
