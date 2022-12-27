@@ -56,7 +56,7 @@ If you'd like to run a command when a device connects or disconnects, use the `-
 
 # How to
 
-## How to automatically switch your mouse to a different hose when your keyboard disconnects
+## How to automatically switch your mouse to a different host when your keyboard disconnects
 
 If you have two devices:
 
