@@ -9,7 +9,7 @@ This utility works by monitoring one of your attached Logitech devices to see wh
 # Features
 
 - Automatically switches all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
-- Keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
+- Securely keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
 
 # Installation
 
@@ -52,7 +52,7 @@ You can run a command like this:
 > logitech-flow-kvm flow-server 1 /dev/hidraw4:1 /dev/hidraw5:1
 ```
 
-Note that the `1` in the above command immediately after `flow-server` indicates that the host number of your server is `1`.  This should match the host number you've paired your mouse and keyboard with your device as (i.e. when your mouse or keyboard is connected to this computer, the light for `1` is lit on the keyboard's device selector).
+Note that the `1` in the above command immediately after `flow-server` indicates that the host number of your server is `1`.  This should match the host number you've paired your mouse and keyboard with your device as (i.e. when your mouse or keyboard is connected to this computer, the light for `1` is lit on the keyboard or mouse's device selector).
 
 After running the above command, you'll receive some output indicating what hostnames the server was bound to; on my computer, this looks like this:
 
