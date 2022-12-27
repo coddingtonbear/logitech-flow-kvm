@@ -3,7 +3,6 @@ import string
 import time
 from argparse import ArgumentParser
 from functools import partial
-from pathlib import Path
 from typing import Literal
 
 import requests
@@ -13,6 +12,7 @@ from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 from .. import constants
 from .. import exceptions
@@ -37,7 +37,6 @@ class FlowClient(LogitechFlowKvmCommand):
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
-        parser.add_argument("certificate_path", type=Path)
         parser.add_argument("host_number", type=int)
         parser.add_argument("server")
         parser.add_argument("--sleep-time", "-s", default=0.25, type=float)
@@ -107,6 +106,8 @@ class FlowClient(LogitechFlowKvmCommand):
             )
             return cert, key
         except exceptions.NoCertificateAvailable:
+            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
             self.console.print(
                 f"[magenta]Pairing with new server {self.options.server}..."
             )
