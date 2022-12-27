@@ -99,6 +99,7 @@ setup(
             "switch-to-host = logitech_flow_kvm.commands.switch_to_host:SwitchToHost",
             "watch = logitech_flow_kvm.commands.watch:Watch",
             "flow-server = logitech_flow_kvm.commands.flow_server:FlowServer",
+            "flow-client = logitech_flow_kvm.commands.flow_server:FlowClient",
         ],
     },
 )
