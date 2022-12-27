@@ -58,11 +58,10 @@ class FlowClient(LogitechFlowKvmCommand):
         return f"http://{self.options.server}:{self.options.port}/{'/'.join(route_segments)}"
 
     def handle(self):
+        console = Console()
         console.print(f"[bold]Connecting to server at {self.build_url()}...")
         result = requests.get(self.build_url("device"))
         result.raise_for_status()
-
-        console = Console()
 
         for id in result.json().keys():
             self.watched_ids.append(id)
