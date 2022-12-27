@@ -1,6 +1,6 @@
-Quickly switch between paired devices when using a mouse and keyboard that supports Logitech Flow.
+Quickly switch between paired devices when using a mouse and keyboard that supports connecting to multiple devices.
 
-This utility works by monitoring one of your attached devices to see what host it is currently connected to, and then, if that changes, instructing other connected devices to switch to the same host.
+This utility works by monitoring one of your attached devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
 
 # Installation
 
