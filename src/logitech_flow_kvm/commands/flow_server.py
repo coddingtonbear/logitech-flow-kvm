@@ -91,8 +91,6 @@ class FlowServerAPI(Flask):
                 self.console.print(
                     f":white_heavy_check_mark: [bold]Device {device.id} connected"
                 )
-
-                self.on_device_status_changed(device.id, self.host_number)
             else:
                 self.console.print(f":x: [bold]Device {device.id} disconnected")
 
