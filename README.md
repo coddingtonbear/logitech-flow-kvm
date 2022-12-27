@@ -2,6 +2,11 @@ Quickly switch between paired devices when using a mouse and keyboard that suppo
 
 This utility works by monitoring one of your attached devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
 
+# Features
+
+- Automatically switch all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
+- Keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
+
 # Installation
 
 ```
@@ -27,7 +32,6 @@ On the computer you've decided to use as your server, get the ID of the device y
 ```
 > logitech-flow-kvm list-devices
 
-Finding devices... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
 ┃ ID             ┃ Product ┃ Name                       ┃ Serial   ┃
 ┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
@@ -46,7 +50,7 @@ You can run a command like this:
 
 Note that the `1` in the above command immediately after `flow-server` indicates that the host number of your server is `1`.  This should match the host number you've paired your mouse and keyboard with your device as (i.e. when your mouse or keyboard is connected to this computer, the light for `1` is lit on the keyboard's device selector).
 
-When you run the above command, you'll receive some output indicating what hostnames the server was bound to; on my computer, this looks like this:
+After running the above command, you'll receive some output indicating what hostnames the server was bound to; on my computer, this looks like this:
 
 ```
 ...
@@ -66,7 +70,7 @@ On the other computers you'd like to use this feature with, you can run the foll
 > logitech-flow-kvm flow-client 2 10.224.224.120
 ```
 
-The client will immediately connect, gather some configuration options from the server, and will instruct your "follower" devices to change their hosts as necessary.
+If this is your first time connecting to this server, you will be walked through a brief pairing process for establishing a secure connection between your server and client instances.  Afterward, the client will connect, gather some configuration options from the server, and will instruct your "follower" devices to change their hosts as necessary in the future.
 
 Note that the `2` above after `flow-client` indicates the host number your devices have paired with your computer under.  See "Server" above for details.
 
