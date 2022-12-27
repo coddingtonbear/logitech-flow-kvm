@@ -1,13 +1,14 @@
-from argparse import ArgumentParser
 import subprocess
+from argparse import ArgumentParser
 
 from logitech_receiver import Device
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
+from ..util import get_device_by_id
+from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
-from ..util import get_device_by_id, parse_connection_status
 
 
 class Listener(EventsListener):
@@ -35,6 +36,9 @@ class Watch(LogitechFlowKvmCommand):
                 self.console.print(f"[cyan]Executed '{cmd}'; status {status}.")
 
     def callback(self, msg: _HIDPP_Notification) -> None:
+        if not self.device:
+            return
+
         if msg.devnumber != self.device.number:
             # This message is for a different device
             return
@@ -55,7 +59,8 @@ class Watch(LogitechFlowKvmCommand):
         self.device = device
 
         self.console.print(
-            f"Listening for connection events for [italic]{self.options.device}[/italic]"
+            "Listening for connection events for "
+            f"[italic]{self.options.device}[/italic]"
         )
         self.console.print("[bold]Press CTRL+C to exit")
 

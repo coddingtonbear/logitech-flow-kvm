@@ -1,15 +1,18 @@
+import time
 from argparse import ArgumentParser
 from functools import partial
-import time
 
-from logitech_receiver import Device, Receiver
-from logitech_receiver.base import receivers, _HIDPP_Notification
-from logitech_receiver.listener import EventsListener
 import requests
+from logitech_receiver import Device
+from logitech_receiver import Receiver
+from logitech_receiver.base import _HIDPP_Notification
+from logitech_receiver.base import receivers
+from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
+from ..util import change_device_host
+from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
-from ..util import parse_connection_status, change_device_host
 
 
 class Listener(EventsListener):
@@ -49,7 +52,7 @@ class FlowClient(LogitechFlowKvmCommand):
                     f":white_heavy_check_mark: [bold]Device {device.id} connected"
                 )
                 response = requests.put(
-                    self.build_url(f"device", device.id),
+                    self.build_url("device", device.id),
                     data=str(self.options.host_number),
                 )
                 response.raise_for_status()
@@ -67,12 +70,16 @@ class FlowClient(LogitechFlowKvmCommand):
                         for known_device in known_device_status.keys():
                             if known_device.id in self.follower_ids:
                                 self.console.print(
-                                    f"Asking follower {known_device} to switch to {target_host}"
+                                    f"Asking follower {known_device} to "
+                                    f" switch to {target_host}"
                                 )
                                 change_device_host(known_device, target_host)
 
     def build_url(self, *route_segments: str) -> str:
-        return f"http://{self.options.server}:{self.options.port}/{'/'.join(route_segments)}"
+        return (
+            f"http://{self.options.server}:{self.options.port}"
+            f"/{'/'.join(route_segments)}"
+        )
 
     def handle(self):
         self.console = Console()
@@ -94,7 +101,7 @@ class FlowClient(LogitechFlowKvmCommand):
             listener = Listener(receiver, partial(self.callback, receiver))
             listener.start()
 
-        self.console.print(f"Ready.")
+        self.console.print("Ready.")
 
         try:
             while True:

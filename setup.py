@@ -26,7 +26,10 @@ setup(
     name="logitech-flow-kvm",
     version="1.0.0",
     license="MIT",
-    description="Quickly switch between paired devices when using a mouse and keyboard that supports Logitech Flow.",
+    description=(
+        "Quickly switch between paired devices when using a mouse"
+        " and keyboard that supports Logitech Flow."
+    ),
     long_description_content_type="text/markdown",
     long_description="%s"
     % (
@@ -43,7 +46,6 @@ setup(
     include_package_data=True,
     zip_safe=False,
     classifiers=[
-        # complete classifier list: http://pypi.python.org/pypi?%3Aaction=list_classifiers
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
@@ -67,8 +69,10 @@ setup(
     ],
     project_urls={
         "Documentation": "https://logitech-flow-kvm.readthedocs.io/",
-        "Changelog": "https://logitech-flow-kvm.readthedocs.io/en/latest/changelog.html",
-        "Issue Tracker": "https://github.com/coddingtonbear/logitech-flow-kvm/issues",
+        "Changelog": (
+            "https://logitech-flow-kvm.readthedocs.io/en/latest/changelog.html"
+        ),
+        "Issue Tracker": ("https://github.com/coddingtonbear/logitech-flow-kvm/issues"),
     },
     keywords=[
         # eg: 'keyword1', 'keyword2', 'keyword3',

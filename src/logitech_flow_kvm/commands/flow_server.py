@@ -1,14 +1,19 @@
 from argparse import ArgumentParser
 from functools import partial
 
-from flask import Flask, request, abort
-from logitech_receiver import Device, Receiver
+from flask import Flask
+from flask import abort
+from flask import request
+from logitech_receiver import Device
+from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
+from ..util import change_device_host
+from ..util import get_device_by_id
+from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
-from ..util import get_device_by_id, change_device_host, parse_connection_status
 
 
 class Listener(EventsListener):
@@ -79,7 +84,7 @@ class FlowServerAPI(Flask):
             except IndexError:
                 return
 
-            if not device.id in [
+            if device.id not in [
                 self.leader_device.id,
                 *[follower_device.id for follower_device in self.follower_devices],
             ]:

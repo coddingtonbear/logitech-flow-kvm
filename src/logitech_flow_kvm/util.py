@@ -1,21 +1,28 @@
-from typing import cast, Iterable, Any, TypedDict
+from typing import Any
+from typing import Iterable
+from typing import TypedDict
+from typing import cast
 
 from bitstruct import unpack_dict
-from solaar.cli.config import select_choice
-from logitech_receiver import Device, Receiver
+from hidapi.udev import DeviceInfo
+from logitech_receiver import Device
+from logitech_receiver import Receiver
 from logitech_receiver.base import receivers
 from logitech_receiver.settings_templates import check_feature_setting
-from hidapi.udev import DeviceInfo
+from solaar.cli.config import select_choice
 
-from .exceptions import CannotChangeHost, ChangeHostFailed, DeviceNotFound
+from .exceptions import CannotChangeHost
+from .exceptions import ChangeHostFailed
+from .exceptions import DeviceNotFound
 
 
 class DeviceStatus(TypedDict):
     """Indicates the status of a device when it connects
 
-    See section 3.2 of https://lekensteyn.nl/files/logitech/logitech_hidpp10_specification_for_Unifying_Receivers.pdf for details
-    as to the meaning of these fields
-
+    See section 3.2 of
+    https://lekensteyn.nl/files/logitech/
+        logitech_hidpp10_specification_for_Unifying_Receivers.pdf
+    for details as to the meaning of these fields
     """
 
     # 0 = packet without payload
