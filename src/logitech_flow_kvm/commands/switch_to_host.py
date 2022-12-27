@@ -36,5 +36,5 @@ class SwitchToHost(LogitechFlowKvmCommand):
         target_value = select_choice(self.options.host, setting.choices, setting, None)
         result = setting.write(target_value, save=False)
 
-        if not result:
+        if not result or result != target_value:
             raise ChangeHostFailed()
