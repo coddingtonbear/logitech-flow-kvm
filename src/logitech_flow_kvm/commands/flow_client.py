@@ -151,11 +151,7 @@ class FlowClient(LogitechFlowKvmCommand):
         result.raise_for_status()
 
         response = result.json()
-        self.console.print(f"Leader device serial number: {response['leader']}")
         self.leader_id = response["leader"]
-        self.console.print(
-            f"Follower device serial numbers: {', '.join(response['followers'])}"
-        )
         self.follower_ids = response["followers"]
 
         for receiver_info in receivers():
@@ -174,7 +170,6 @@ class FlowClient(LogitechFlowKvmCommand):
         table.add_row("Follower Serials", "\n".join(self.follower_ids))
 
         self.console.print(table)
-        self.console.print("Ready.")
 
         try:
             while True:
