@@ -98,10 +98,7 @@ class FlowClient(LogitechFlowKvmCommand):
         if "verify" not in kwargs:
             kwargs["verify"] = self.cert
 
-        try:
-            return requests.request(method, url, **kwargs)
-        except requests.exceptions.SSLError:
-            raise exceptions.ServerNotPaired()
+        return requests.request(method, url, **kwargs)
 
     def pair(self) -> None:
         urllib3.disable_warnings(InsecureRequestWarning)
@@ -134,7 +131,7 @@ class FlowClient(LogitechFlowKvmCommand):
         cert_path = get_host_certificate_path(self.options.server)
         if os.path.exists(cert_path):
             try:
-                self.request("OPTIONS", self.build_url("pairing"), verify=False)
+                self.request("OPTIONS", self.build_url("pairing"))
             except requests.exceptions.SSLError:
                 self.pair()
             except requests.exceptions.RequestException:
