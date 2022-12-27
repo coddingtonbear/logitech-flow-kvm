@@ -106,11 +106,11 @@ You can see when a device connects or disconnects from the receiver using the fo
 > logitech-flow-kvm watch /dev/hidraw4:1
 ```
 
-If you'd like to run a command when a device connects or disconnects, use the `--on-disconnect-execute` or `--on-connect-execute` arguments.  See the "How To" section below for how you might use this.
+If you'd like to run a command when a device connects or disconnects, use the `--on-disconnect-execute` or `--on-connect-execute` arguments.  See the "Automatically switch your mouse to a different host when your keyboard disconnects" section below for a concrete example of how you might use this.
 
 ## Automatically switch your mouse to a different host when your keyboard disconnects
 
-Note: this isn't the recommended way of handling this sort of thing -- you probably want to follow the instructions above under "Use" above.
+Note: this isn't the recommended way of handling this sort of thing -- you probably want to follow the instructions above under "Basic Use" above.
 
 If you have two devices:
 
