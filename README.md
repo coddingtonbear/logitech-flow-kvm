@@ -1,3 +1,5 @@
+![header-image](http://coddingtonbear-public.s3.amazonaws.com/github/logitech-flow-kvm/mx_keys_mini.jpg)
+
 Quickly switch between paired devices when using a mouse and keyboard that supports connecting to multiple devices.
 
 This utility works by monitoring one of your attached devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
