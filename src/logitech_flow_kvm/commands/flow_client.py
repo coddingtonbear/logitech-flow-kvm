@@ -2,7 +2,7 @@ from argparse import ArgumentParser
 from functools import partial
 import time
 
-from logitech_receiver import Receiver
+from logitech_receiver import Device, Receiver
 from logitech_receiver.base import receivers, _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 import requests
@@ -18,7 +18,10 @@ class Listener(EventsListener):
 
 
 class FlowClient(LogitechFlowKvmCommand):
-    watched_ids: list[str] = []
+    leader_id: str
+    follower_ids: list[str]
+
+    device_status: dict[Receiver, dict[Device, int]] = {}
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
@@ -30,6 +33,9 @@ class FlowClient(LogitechFlowKvmCommand):
         if msg.sub_id == 0x41:
             result = parse_connection_status(msg.data)
 
+            if receiver not in self.device_status:
+                self.device_stautus[receiver] = {}
+
             try:
                 device = receiver[msg.devnumber]
             except IndexError:
@@ -37,26 +43,29 @@ class FlowClient(LogitechFlowKvmCommand):
 
             self.console.print("")
             if result["link_status"] == 0:
-                if device.id in self.watched_ids:
-                    self.console.print(
-                        f":white_heavy_check_mark: [bold]Device {device.id} connected"
-                    )
-                    response = requests.put(
-                        self.build_url(f"device", device.id),
-                        data=str(self.options.host_number),
-                    )
-                    response.raise_for_status()
-                else:
-                    self.console.print(
-                        f":white_heavy_check_mark: [bright_black]Device {device.id} connected (ignored)"
-                    )
+                self.device_status[receiver][device] = self.host_number
+                self.console.print(
+                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
+                )
+                response = requests.put(
+                    self.build_url(f"device", device.id),
+                    data=str(self.options.host_number),
+                )
+                response.raise_for_status()
             else:
-                if device.id in self.watched_ids:
-                    self.console.print(f":x: [bold]Device {device.id} disconnected")
-                else:
-                    self.console.print(
-                        f":x: [bright_black]Device {device.id} disconnected (ignored)"
-                    )
+                self.console.print(f":x: [bold]Device {device.id} disconnected")
+
+                if device.id == self.leader_id:
+                    response = requests.get(self.build_url("device", device.id))
+                    response.raise_for_status()
+                    target_host = int(response.content)
+
+                    for known_device in self.device_status.keys():
+                        if known_device.id in self.follower_ids:
+                            self.console.print(
+                                f"Asking follower {device} to switch to {target_host}"
+                            )
+                            change_device_host(known_device, target_host)
 
     def build_url(self, *route_segments: str) -> str:
         return f"http://{self.options.server}:{self.options.port}/{'/'.join(route_segments)}"
@@ -64,14 +73,16 @@ class FlowClient(LogitechFlowKvmCommand):
     def handle(self):
         self.console = Console()
         self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
-        result = requests.get(self.build_url("device"))
+        result = requests.get(self.build_url("configuration"))
         result.raise_for_status()
 
-        for id in result.json().keys():
-            self.watched_ids.append(id)
-            self.console.print(
-                f"Listening for connection status of device with serial number {id}"
-            )
+        response = result.json()
+        self.console.print(f"Leader device serial number: {response['leader']}")
+        self.leader_id = response["leader"]
+        self.console.print(
+            f"Follower device serial numbers: {', '.join(response['followers'])}"
+        )
+        self.follower_ids = response["followers"]
 
         for receiver_info in receivers():
             receiver = Receiver.open(receiver_info)

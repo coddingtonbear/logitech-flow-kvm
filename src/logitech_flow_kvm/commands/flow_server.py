@@ -30,6 +30,8 @@ class FlowServerAPI(Flask):
 
     device_status: dict[Receiver, dict[Device, int]] = {}
 
+    console: Console = Console()
+
     def __init__(
         self,
         *args,
@@ -72,31 +74,56 @@ class FlowServerAPI(Flask):
             if receiver not in self.device_status:
                 self.device_status[receiver] = {}
 
-            device = receiver[msg.devnumber]
+            try:
+                device = receiver[msg.devnumber]
+            except IndexError:
+                return
+
             if not device.id in [
                 self.leader_device.id,
                 *[follower_device.id for follower_device in self.follower_devices],
             ]:
                 return
 
+            self.console.print("")
             if result["link_status"] == 0:
                 self.device_status[receiver][device] = self.host_number
+                self.console.print(
+                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
+                )
+
+                self.on_device_status_changed(device.id, self.host_number)
+            else:
+                self.console.print(f":x: [bold]Device {device.id} disconnected")
 
     def remote_device_status_change(self, id: str, new_host: int) -> None:
+        found_device = False
+
         for devices in self.device_status.values():
             for device in devices.keys():
                 if device.id == id:
                     devices[device] = int(request.data)
-                    return
+                    found_device = True
+
+        if not found_device:
+            raise UnknownDevice()
 
         if self.leader_device.id == id:
             for device in self.follower_devices:
+                self.console.print(f"Asking follower {device} to switch to {new_host}")
                 change_device_host(device, new_host)
-
-        raise UnknownDevice()
 
 
 def bind_routes(app: FlowServerAPI) -> None:
+    @app.get("/configuration")
+    def configuration():
+        response: dict = {}
+
+        response["leader"] = app.leader_device.id
+        response["followers"] = [device.id for device in app.follower_devices]
+
+        return response
+
     @app.get("/device")
     def device_status():
         response: dict = {}

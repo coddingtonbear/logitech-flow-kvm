@@ -85,7 +85,7 @@ def parse_connection_status(data: bytes) -> DeviceStatus:
     return unpack_dict(">u1u1u1u1u4r16", names, data)
 
 
-def get_device_host_setting(self, device: Device) -> Any:
+def get_device_host_setting(device: Device) -> Any:
     setting = check_feature_setting(device, "change-host")
     if setting:
         return setting
