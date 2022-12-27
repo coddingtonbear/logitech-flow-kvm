@@ -34,3 +34,4 @@ repos:
         additional_dependencies:
           - types-requests
           - types-setuptools
+          - types-pyOpenSSL

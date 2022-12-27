@@ -9,8 +9,12 @@ from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
+from rich.prompt import Prompt
+from rich.table import Table
 
+from .. import constants
 from ..util import change_device_host
+from ..util import get_certificate_key_path
 from ..util import get_device_by_id
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
@@ -153,6 +157,33 @@ def bind_routes(app: FlowServerAPI) -> None:
                 abort(404)
         abort(405)
 
+    @app.route("/pairing", methods=["POST"])
+    def pair():
+        console = Console()
+
+        console.print(
+            f"[magenta]Received pairing request from {request.remote_addr}; "
+            "a pairing code has been printed to the console running `flow-client` "
+            "enter that code below to complete the pairing process."
+        )
+        typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code:")
+
+        if typed_pairing_code.strip().upper() == request.data.strip().upper():
+            console.print("[magenta]Paired successfully")
+            cert_path, key_path = get_certificate_key_path("server", create=True)
+
+            cert_data = ""
+            key_data = ""
+            with open(cert_path, "r") as inf:
+                cert_data = inf.read()
+            with open(key_path, "r") as inf:
+                key_data = inf.read()
+
+            return {"certificate": cert_data, "key": key_data}
+
+        console.print("[red][bold]Pairing code did not match; pairing failed!")
+        abort(401)
+
 
 class FlowServer(LogitechFlowKvmCommand):
     @classmethod
@@ -161,7 +192,7 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("leader_device")
         parser.add_argument("follower_devices", nargs="+")
         parser.add_argument("--binding-interface", "-b", default="0.0.0.0", type=str)
-        parser.add_argument("--port", "-p", default=24801, type=int)
+        parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def handle(self) -> None:
         leader_device = get_device_by_id(self.options.leader_device)
@@ -169,9 +200,23 @@ class FlowServer(LogitechFlowKvmCommand):
         for device in self.options.follower_devices:
             follower_devices.append(get_device_by_id(device))
 
+        cert_path, key_path = get_certificate_key_path("server", create=True)
+
         console = Console()
-        console.print(f"Following [italic]{self.options.leader_device}[/italic]")
-        console.print("[bold]Press CTRL+C to exit")
+
+        table = Table()
+        table.add_column("Key")
+        table.add_column("Value")
+
+        table.add_row("Leader", self.options.leader_device)
+        table.add_row("Certificate", cert_path)
+        table.add_row("Key", key_path)
+        table.add_row("Binding Interface", self.options.binding_interface)
+        table.add_row("Port", str(self.options.port))
+
+        console.print(table)
+
+        console.print("Press [red]CTRL+C[/red] to exit")
 
         app = FlowServerAPI(
             __name__,
@@ -186,7 +231,7 @@ class FlowServer(LogitechFlowKvmCommand):
             app.run(
                 port=self.options.port,
                 host=self.options.binding_interface,
-                ssl_context="adhoc",
+                ssl_context=(cert_path, key_path),
             )
         except KeyboardInterrupt:
             pass

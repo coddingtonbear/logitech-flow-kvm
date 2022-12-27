@@ -1,19 +1,26 @@
+import os
+import re
+import uuid
 from typing import Any
 from typing import Iterable
 from typing import TypedDict
 from typing import cast
 
+import appdirs
 from bitstruct import unpack_dict
 from hidapi.udev import DeviceInfo
 from logitech_receiver import Device
 from logitech_receiver import Receiver
 from logitech_receiver.base import receivers
 from logitech_receiver.settings_templates import check_feature_setting
+from OpenSSL import crypto
 from solaar.cli.config import select_choice
 
+from . import constants
 from .exceptions import CannotChangeHost
 from .exceptions import ChangeHostFailed
 from .exceptions import DeviceNotFound
+from .exceptions import NoCertificateAvailable
 
 
 class DeviceStatus(TypedDict):
@@ -113,3 +120,66 @@ def change_device_host(device: Device, host: int) -> None:
 
     if not result or result != target_value:
         raise ChangeHostFailed()
+
+
+def get_valid_filename(s: str):
+    s = str(s).strip().replace(" ", "_")
+    return re.sub(r"(?u)[^-\w.]", "", s)
+
+
+def get_certificate_key_path(
+    name: str, create=False, data: tuple[str, str] | None = None
+) -> tuple[str, str]:
+    if data is not None and create is False:
+        raise Exception("If certificate `data` is provided, `create` must be `True`.")
+
+    user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
+
+    os.makedirs(user_data_dir, exist_ok=True)
+    cert_path = os.path.join(
+        user_data_dir,
+        f"{name}.cert",
+    )
+    key_path = os.path.join(user_data_dir, f"{name}.key")
+    if not (os.path.exists(cert_path) and os.path.exists(key_path)):
+        if create:
+            cert_data = ""
+            key_data = ""
+
+            if data is None:
+                key = crypto.PKey()
+                key.generate_key(crypto.TYPE_RSA, 4096)
+
+                cert = crypto.X509()
+                subject = cert.get_subject()
+                subject.C = "US"
+                subject.ST = "WA"
+                subject.L = "Seattle"
+                subject.O = "coddingtonbear"  # noqa: E741
+                subject.OU = "logitech-flow-kvm"
+                subject.emailAddress = "none@none.com"
+                cert.set_serial_number(uuid.uuid4().int)
+                cert.gmtime_adj_notBefore(0)
+                cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
+                cert.set_issuer(subject)
+                cert.set_pubkey(key)
+                cert.sign(key, "sha512")
+
+                cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, cert).decode(
+                    "utf-8"
+                )
+                key_data = crypto.dump_privatekey(crypto.FILETYPE_PEM, key).decode(
+                    "utf-8"
+                )
+            else:
+                cert_data = data[0]
+                key_data = data[1]
+
+            with open(cert_path, "wt") as f:
+                f.write(cert_data)
+            with open(key_path, "wt") as f:
+                f.write(key_data)
+        else:
+            raise NoCertificateAvailable()
+
+    return (cert_path, key_path)

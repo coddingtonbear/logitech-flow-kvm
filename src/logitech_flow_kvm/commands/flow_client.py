@@ -1,19 +1,24 @@
+import random
+import string
 import time
 from argparse import ArgumentParser
 from functools import partial
+from pathlib import Path
 from typing import Literal
 
 import requests
-import urllib3
 from logitech_receiver import Device
 from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
-from urllib3.exceptions import InsecureRequestWarning
 
+from .. import constants
+from .. import exceptions
 from ..util import change_device_host
+from ..util import get_certificate_key_path
+from ..util import get_valid_filename
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
@@ -26,15 +31,17 @@ class Listener(EventsListener):
 class FlowClient(LogitechFlowKvmCommand):
     leader_id: str
     follower_ids: list[str]
+    cert_and_key: tuple[str, str] | None = None
 
     device_status: dict[Receiver, dict[Device, int]] = {}
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
+        parser.add_argument("certificate_path", type=Path)
         parser.add_argument("host_number", type=int)
         parser.add_argument("server")
         parser.add_argument("--sleep-time", "-s", default=0.25, type=float)
-        parser.add_argument("--port", "-p", default=24801, type=int)
+        parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def callback(self, receiver: Receiver, msg: _HIDPP_Notification) -> None:
         if msg.sub_id == 0x41:
@@ -86,14 +93,55 @@ class FlowClient(LogitechFlowKvmCommand):
         )
 
     def request(
-        self, method: Literal["GET", "PUT"], url: str, **kwargs
+        self, method: Literal["GET", "PUT", "OPTIONS", "POST"], url: str, **kwargs
     ) -> requests.Response:
-        return requests.request(method, url, verify=False, **kwargs)
+        try:
+            return requests.request(method, url, cert=self.cert_and_key, **kwargs)
+        except requests.exceptions.SSLError:
+            raise exceptions.ServerNotPaired()
+
+    def get_certificate_key_path(self) -> tuple[str, str]:
+        try:
+            cert, key = get_certificate_key_path(
+                get_valid_filename(self.options.server)
+            )
+            return cert, key
+        except exceptions.NoCertificateAvailable:
+            self.console.print(
+                f"[magenta]Pairing with new server {self.options.server}..."
+            )
+            response = self.request("OPTIONS", self.build_url("pairing"), verify=False)
+            if not response.ok:
+                raise exceptions.ServerNotAvailable(self.options.server)
+
+            pairing_code = "".join(random.choices(string.digits, k=6))
+            self.console.print(
+                f"[magenta]Pairing code: [bold][bright_magenta]{pairing_code}"
+            )
+            self.console.print(
+                "[magenta]To complete the pairing process, enter the above code "
+                "into the server console running `flow-server` when requested."
+            )
+
+            response = self.request(
+                "POST", self.build_url("pairing"), verify=False, data=pairing_code
+            )
+            if response.ok:
+                data = response.json()
+                cert, key = get_certificate_key_path(
+                    get_valid_filename(self.options.server),
+                    create=True,
+                    data=(data["certificate"], data["key"]),
+                )
+                return cert, key
+            else:
+                raise exceptions.PairingFailed()
 
     def handle(self):
-        urllib3.disable_warnings(InsecureRequestWarning)
-
         self.console = Console()
+
+        self.cert_and_key = self.get_certificate_key_path()
+
         self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
         result = self.request("GET", self.build_url("configuration"))
         result.raise_for_status()

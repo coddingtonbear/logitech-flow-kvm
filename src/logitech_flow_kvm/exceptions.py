@@ -6,6 +6,22 @@ class UserError(LogitechFlowKvmError):
     pass
 
 
+class NoCertificateAvailable(LogitechFlowKvmError):
+    pass
+
+
+class ServerNotAvailable(UserError):
+    pass
+
+
+class PairingFailed(UserError):
+    pass
+
+
+class ServerNotPaired(UserError):
+    pass
+
+
 class DeviceNotFound(UserError):
     pass
 
