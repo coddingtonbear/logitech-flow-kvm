@@ -113,7 +113,7 @@ def bind_routes(app: FlowServerAPI) -> None:
             for devices in app.device_status.values():
                 for device, status in devices.items():
                     if device.id == id:
-                        return status
+                        return str(status)
             abort(404)
         elif request.method == "PUT":
             try:
