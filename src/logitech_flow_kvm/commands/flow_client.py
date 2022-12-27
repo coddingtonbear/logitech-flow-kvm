@@ -9,7 +9,7 @@ import requests
 from rich.console import Console
 
 from . import LogitechFlowKvmCommand
-from ..util import parse_connection_status
+from ..util import parse_connection_status, change_device_host
 
 
 class Listener(EventsListener):
@@ -34,7 +34,7 @@ class FlowClient(LogitechFlowKvmCommand):
             result = parse_connection_status(msg.data)
 
             if receiver not in self.device_status:
-                self.device_stautus[receiver] = {}
+                self.device_status[receiver] = {}
 
             try:
                 device = receiver[msg.devnumber]
@@ -43,7 +43,7 @@ class FlowClient(LogitechFlowKvmCommand):
 
             self.console.print("")
             if result["link_status"] == 0:
-                self.device_status[receiver][device] = self.host_number
+                self.device_status[receiver][device] = self.options.host_number
                 self.console.print(
                     f":white_heavy_check_mark: [bold]Device {device.id} connected"
                 )
@@ -60,12 +60,13 @@ class FlowClient(LogitechFlowKvmCommand):
                     response.raise_for_status()
                     target_host = int(response.content)
 
-                    for known_device in self.device_status.keys():
-                        if known_device.id in self.follower_ids:
-                            self.console.print(
-                                f"Asking follower {device} to switch to {target_host}"
-                            )
-                            change_device_host(known_device, target_host)
+                    for known_device_status in self.device_status.values():
+                        for known_device in known_device_status.keys():
+                            if known_device.id in self.follower_ids:
+                                self.console.print(
+                                    f"Asking follower {known_device} to switch to {target_host}"
+                                )
+                                change_device_host(known_device, target_host)
 
     def build_url(self, *route_segments: str) -> str:
         return f"http://{self.options.server}:{self.options.port}/{'/'.join(route_segments)}"
