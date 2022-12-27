@@ -133,4 +133,4 @@ You can respond run a command that will listen to when the "MX Keys Mini" device
 
 # Credits
 
-Much of what this tool does is dependent upon the work put together by the folks working on [Solaar](https://github.com/pwr-Solaar/Solaar) -- really: all of the functionality provided here can also be done by Solaar alone, albeit just a little bit slower.
+Much of what this tool does is dependent upon the work put together by the folks working on [Solaar](https://github.com/pwr-Solaar/Solaar).
