@@ -27,6 +27,7 @@ class FlowClient(LogitechFlowKvmCommand):
     def add_arguments(cls, parser: ArgumentParser) -> None:
         parser.add_argument("host_number", type=int)
         parser.add_argument("server")
+        parser.add_argument("--sleep-time", "-s", default=0.25, type=float)
         parser.add_argument("--port", "-p", default=24801, type=int)
 
     def callback(self, receiver: Receiver, msg: _HIDPP_Notification) -> None:
@@ -56,6 +57,8 @@ class FlowClient(LogitechFlowKvmCommand):
                 self.console.print(f":x: [bold]Device {device.id} disconnected")
 
                 if device.id == self.leader_id:
+                    time.sleep(self.options.sleep_time)
+
                     response = requests.get(self.build_url("device", device.id))
                     response.raise_for_status()
                     target_host = int(response.content)
