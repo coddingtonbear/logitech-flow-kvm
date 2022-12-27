@@ -94,7 +94,6 @@ class FlowServerAPI(Flask):
             ]:
                 return
 
-            self.console.print("")
             if result["link_status"] == 0:
                 self.device_status[receiver][device] = self.host_number
                 self.console.print(
@@ -202,10 +201,16 @@ class FlowServer(LogitechFlowKvmCommand):
         console = Console()
 
         table = Table()
-        table.add_column("Key")
-        table.add_column("Value")
+        table.add_column("Setting Name")
+        table.add_column("Setting Value")
 
-        table.add_row("Leader", self.options.leader_device)
+        table.add_row("Leader", str(get_device_by_id(self.options.leader_device)))
+        table.add_row(
+            "Followers",
+            "\n".join(
+                [str(get_device_by_id(dev)) for dev in self.options.follower_devices]
+            ),
+        )
         table.add_row("Certificate", cert_path)
         table.add_row("Key", key_path)
         table.add_row("Binding Interface", self.options.binding_interface)

@@ -14,6 +14,7 @@ from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
+from rich.table import Table
 from urllib3.exceptions import InsecureRequestWarning
 
 from .. import constants
@@ -55,7 +56,6 @@ class FlowClient(LogitechFlowKvmCommand):
             except IndexError:
                 return
 
-            self.console.print("")
             if result["link_status"] == 0:
                 self.device_status[receiver][device] = self.options.host_number
                 self.console.print(
@@ -164,6 +164,16 @@ class FlowClient(LogitechFlowKvmCommand):
             listener = Listener(receiver, partial(self.callback, receiver))
             listener.start()
 
+        table = Table()
+        table.add_column("Setting Name")
+        table.add_column("Setting Value")
+
+        table.add_row("Server URL", self.build_url())
+        table.add_row("Certificate", self.cert)
+        table.add_row("Leader Serial", self.leader_id)
+        table.add_row("Follower Serials", "\n".join(self.follower_ids))
+
+        self.console.print(table)
         self.console.print("Ready.")
 
         try:
