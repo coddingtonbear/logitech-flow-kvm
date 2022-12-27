@@ -1,6 +1,7 @@
 import time
 from argparse import ArgumentParser
 from functools import partial
+from typing import Literal
 
 import requests
 from logitech_receiver import Device
@@ -51,7 +52,8 @@ class FlowClient(LogitechFlowKvmCommand):
                 self.console.print(
                     f":white_heavy_check_mark: [bold]Device {device.id} connected"
                 )
-                response = requests.put(
+                response = self.request(
+                    "PUT",
                     self.build_url("device", device.id),
                     data=str(self.options.host_number),
                 )
@@ -62,7 +64,7 @@ class FlowClient(LogitechFlowKvmCommand):
                 if device.id == self.leader_id:
                     time.sleep(self.options.sleep_time)
 
-                    response = requests.get(self.build_url("device", device.id))
+                    response = self.request("GET", self.build_url("device", device.id))
                     response.raise_for_status()
                     target_host = int(response.content)
 
@@ -77,14 +79,19 @@ class FlowClient(LogitechFlowKvmCommand):
 
     def build_url(self, *route_segments: str) -> str:
         return (
-            f"http://{self.options.server}:{self.options.port}"
+            f"https://{self.options.server}:{self.options.port}"
             f"/{'/'.join(route_segments)}"
         )
+
+    def request(
+        self, method: Literal["GET", "PUT"], url: str, **kwargs
+    ) -> requests.Response:
+        return requests.request(method, url, verify=False, **kwargs)
 
     def handle(self):
         self.console = Console()
         self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
-        result = requests.get(self.build_url("configuration"))
+        result = self.request("GET", self.build_url("configuration"))
         result.raise_for_status()
 
         response = result.json()

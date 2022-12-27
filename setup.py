@@ -86,6 +86,7 @@ setup(
         "flask>=2.2.2,<3.0",
         "requests>=2.28,<3.0",
         "rich>=12.6.0,<13",
+        "pyopenssl>=22.1.0,<23",
     ],
     extras_require={
         # eg:

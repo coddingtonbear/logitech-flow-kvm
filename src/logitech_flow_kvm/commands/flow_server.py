@@ -183,6 +183,10 @@ class FlowServer(LogitechFlowKvmCommand):
         bind_routes(app)
 
         try:
-            app.run(port=self.options.port, host=self.options.binding_interface)
+            app.run(
+                port=self.options.port,
+                host=self.options.binding_interface,
+                ssl_context="adhoc",
+            )
         except KeyboardInterrupt:
             pass
