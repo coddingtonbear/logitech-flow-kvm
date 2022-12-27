@@ -183,10 +183,15 @@ def bind_routes(app: FlowServerAPI) -> None:
 
     @app.route("/clipboard", methods=["PUT", "GET"])
     def clipboard():
+        console = Console()
+
         if request.method == "GET":
             return pyperclip.paste()
         elif request.method == "PUT":
-            pyperclip.copy(request.data)
+            pyperclip.copy(request.data.decode("utf-8"))
+            console.print(
+                f"Clipboard set from client with {len(request.data)} bytes of data"
+            )
             return ""
 
         abort(405)

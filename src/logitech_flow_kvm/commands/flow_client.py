@@ -76,9 +76,15 @@ class FlowClient(LogitechFlowKvmCommand):
                 self.console.print(f":x: [bold]Device {device.id} disconnected")
 
                 if device.id == self.leader_id:
-                    self.request(
-                        "PUT", self.build_url("clipboard"), data=pyperclip.paste()
+                    clipboard_data = pyperclip.paste()
+                    clipboard_response = self.request(
+                        "PUT", self.build_url("clipboard"), data=clipboard_data
                     )
+                    if clipboard_response.ok:
+                        self.console.print(
+                            "Clipboard contents set on server with "
+                            f"{len(clipboard_data)} bytes of data"
+                        )
 
                     time.sleep(self.options.sleep_time)
 
