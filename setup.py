@@ -81,6 +81,7 @@ setup(
         "safdie>=2.0.1,<3.0",
         "flask>=2.2.2,<3.0",
         "requests>=2.28,<3.0",
+        "rich>=12.6.0,<13",
     ],
     extras_require={
         # eg:
