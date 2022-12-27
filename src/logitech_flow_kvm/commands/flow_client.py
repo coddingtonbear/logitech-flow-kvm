@@ -30,28 +30,32 @@ class FlowClient(LogitechFlowKvmCommand):
         if msg.sub_id == 0x41:
             result = parse_connection_status(msg.data)
 
-            device = receiver[msg.devnumber]
+            try:
+                device = receiver[msg.devnumber]
+            except IndexError:
+                return
+
             self.console.print("")
             if result["link_status"] == 0:
-                if device.id not in self.watched_ids:
+                if device.id in self.watched_ids:
                     self.console.print(
                         f":white_heavy_check_mark: [bold]Device {device.id} connected"
                     )
-                    result = requests.put(
-                        self.build_url(f"devices", device.id),
-                        data=self.options.host_number,
+                    response = requests.put(
+                        self.build_url(f"device", device.id),
+                        data=str(self.options.host_number),
                     )
-                    result.raise_for_status()
+                    response.raise_for_status()
                 else:
                     self.console.print(
-                        f":white_heavy_check_mark: [grey]Device {device.id} connected (ignored)"
+                        f":white_heavy_check_mark: [bright_black]Device {device.id} connected (ignored)"
                     )
             else:
-                if device.id not in self.watched_ids:
+                if device.id in self.watched_ids:
                     self.console.print(f":x: [bold]Device {device.id} disconnected")
                 else:
                     self.console.print(
-                        f":x: [grey]Device {device.id} disconnected (ignored)"
+                        f":x: [bright_black]Device {device.id} disconnected (ignored)"
                     )
 
     def build_url(self, *route_segments: str) -> str:
