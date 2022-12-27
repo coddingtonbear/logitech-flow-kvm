@@ -77,6 +77,7 @@ setup(
     install_requires=[
         "solaar>=1.1.8,<2.0",
         "hid_parser==0.0.3",
+        "bitstruct>=8.15.1,<9.0",
         "safdie>=2.0.1,<3.0",
     ],
     extras_require={
@@ -94,6 +95,7 @@ setup(
         "logitech_flow_kvm.commands": [
             "list-devices = logitech_flow_kvm.commands.list_devices:ListDevices",
             "switch-to-host = logitech_flow_kvm.commands.switch_to_host:SwitchToHost",
+            "watch = logitech_flow_kvm.commands.watch:Watch",
         ],
     },
 )
