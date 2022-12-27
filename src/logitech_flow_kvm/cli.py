@@ -33,7 +33,7 @@ LOGGING_CONFIG = {
         },
         'logitech_receiver.receiver': {
             'handlers': ['default'],
-            'level': 'CRITICAL',
+            'level': 'ERROR',
             'propagate': False,
         },
         'logitech_receiver.base': {
