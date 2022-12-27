@@ -131,7 +131,7 @@ class FlowClient(LogitechFlowKvmCommand):
         cert_path = get_host_certificate_path(self.options.server)
         if os.path.exists(cert_path):
             try:
-                self.request("OPTIONS", self.build_url("pairing"))
+                self.request("OPTIONS", self.build_url("pairing"), verify=cert_path)
             except requests.exceptions.SSLError:
                 self.pair()
             except requests.exceptions.RequestException:
