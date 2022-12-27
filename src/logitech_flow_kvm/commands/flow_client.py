@@ -22,6 +22,7 @@ class FlowClient(LogitechFlowKvmCommand):
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
+        parser.add_argument("host_number", type=int)
         parser.add_argument("server")
         parser.add_argument("--port", "-p", default=24801, type=int)
 

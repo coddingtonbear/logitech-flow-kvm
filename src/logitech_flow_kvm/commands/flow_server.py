@@ -130,7 +130,6 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("host_number", type=int)
         parser.add_argument("leader_device")
         parser.add_argument("follower_devices", nargs="+")
-
         parser.add_argument("--port", "-p", default=24801, type=int)
 
     def handle(self) -> None:
