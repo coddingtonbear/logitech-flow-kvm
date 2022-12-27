@@ -166,9 +166,12 @@ def bind_routes(app: FlowServerAPI) -> None:
             "a pairing code has been printed to the console running `flow-client` "
             "enter that code below to complete the pairing process."
         )
-        typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code:")
+        typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
 
-        if typed_pairing_code.strip().upper() == request.data.strip().upper():
+        if (
+            typed_pairing_code.strip().upper()
+            == request.data.decode("utf-8").strip().upper()
+        ):
             console.print("[magenta]Paired successfully")
             cert_path, key_path = get_certificate_key_path("server", create=True)
 
