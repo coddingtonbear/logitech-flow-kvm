@@ -24,7 +24,7 @@ def read(*names, **kwargs):
 
 setup(
     name="logitech-flow-kvm",
-    version="0.1.0",
+    version="1.0.0",
     license="MIT",
     description="Quickly switch between paired devices when using a mouse and keyboard that supports Logitech Flow.",
     long_description_content_type="text/markdown",

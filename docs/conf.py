@@ -25,7 +25,7 @@ try:
     version = release = get_distribution('logitech_flow_kvm').version
 except Exception:
     traceback.print_exc()
-    version = release = '0.1.0'
+    version = release = '1.0.0'
 
 pygments_style = 'trac'
 templates_path = ['.']
