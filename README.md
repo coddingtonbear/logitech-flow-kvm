@@ -1,6 +1,6 @@
 ![header-image](http://coddingtonbear-public.s3.amazonaws.com/github/logitech-flow-kvm/mx_keys_buttons.jpg)
 
-Quickly switch between paired devices when using a mouse and keyboard that supports connecting to multiple devices.
+Quickly switch between paired devices when using a Logitech mouse and keyboard that supports connecting to multiple devices.
 
 Do you use Logitech devices that support multiple hosts and find it a little frustrating how tedious it is to switch between hosts when you're using Linux due to Logitech's "Flow" features being unsupported there?  Good news: you can have "Flow"-like features on Linux now, too.
 
