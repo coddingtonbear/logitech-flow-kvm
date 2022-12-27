@@ -2,11 +2,13 @@
 
 Quickly switch between paired devices when using a mouse and keyboard that supports connecting to multiple devices.
 
-This utility works by monitoring one of your attached devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
+Do you use Logitech devices that support multiple hosts and find it a little frustrating how tedious it is to switch between hosts when you're using Linux due to Logitech's "Flow" features being unsupported there?  Good news: you can have "Flow"-like features on Linux now, too.
+
+This utility works by monitoring one of your attached Logitech devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
 
 # Features
 
-- Automatically switch all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
+- Automatically switches all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
 - Keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
 
 # Installation
