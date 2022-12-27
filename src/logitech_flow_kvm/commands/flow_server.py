@@ -130,6 +130,7 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("host_number", type=int)
         parser.add_argument("leader_device")
         parser.add_argument("follower_devices", nargs="+")
+        parser.add_argument("--binding-interface", "-b", default="0.0.0.0", type=str)
         parser.add_argument("--port", "-p", default=24801, type=int)
 
     def handle(self) -> None:
@@ -152,6 +153,6 @@ class FlowServer(LogitechFlowKvmCommand):
         bind_routes(app)
 
         try:
-            app.run(port=self.options.port)
+            app.run(port=self.options.port, host=self.options.binding_interface)
         except KeyboardInterrupt:
             pass
