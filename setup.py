@@ -79,6 +79,8 @@ setup(
         "hid_parser==0.0.3",
         "bitstruct>=8.15.1,<9.0",
         "safdie>=2.0.1,<3.0",
+        "flask>=2.2.2,<3.0",
+        "requests>=2.28,<3.0",
     ],
     extras_require={
         # eg:
@@ -96,6 +98,7 @@ setup(
             "list-devices = logitech_flow_kvm.commands.list_devices:ListDevices",
             "switch-to-host = logitech_flow_kvm.commands.switch_to_host:SwitchToHost",
             "watch = logitech_flow_kvm.commands.watch:Watch",
+            "flow-server = logitech_flow_kvm.commands.flow_server:FlowServer",
         ],
     },
 )

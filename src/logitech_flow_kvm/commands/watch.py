@@ -1,14 +1,13 @@
 from argparse import ArgumentParser
 import subprocess
 
-from bitstruct import unpack_dict
 from logitech_receiver import Device
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
 from . import LogitechFlowKvmCommand
-from ..util import get_device_by_id
+from ..util import get_device_by_id, parse_connection_status
 
 
 class Listener(EventsListener):
@@ -41,15 +40,7 @@ class Watch(LogitechFlowKvmCommand):
             return
 
         if msg.sub_id == 0x41:
-            names = [
-                "connection_reason",
-                "link_status",
-                "encryption_status",
-                "software_present",
-                "device_type",
-                "wireless_pid",
-            ]
-            result = unpack_dict(">u1u1u1u1u4r16", names, msg.data)
+            result = parse_connection_status(msg.data)
 
             self.console.print("")
             if result["link_status"] == 0:
