@@ -4,12 +4,14 @@ from functools import partial
 from typing import Literal
 
 import requests
+import urllib3
 from logitech_receiver import Device
 from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
+from urllib3.exceptions import InsecureRequestWarning
 
 from ..util import change_device_host
 from ..util import parse_connection_status
@@ -89,6 +91,8 @@ class FlowClient(LogitechFlowKvmCommand):
         return requests.request(method, url, verify=False, **kwargs)
 
     def handle(self):
+        urllib3.disable_warnings(InsecureRequestWarning)
+
         self.console = Console()
         self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
         result = self.request("GET", self.build_url("configuration"))
