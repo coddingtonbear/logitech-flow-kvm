@@ -173,16 +173,10 @@ def bind_routes(app: FlowServerAPI) -> None:
             == request.data.decode("utf-8").strip().upper()
         ):
             console.print("[magenta]Paired successfully")
-            cert_path, key_path = get_certificate_key_path("server", create=True)
+            cert_path, _ = get_certificate_key_path("server", create=True)
 
-            cert_data = ""
-            key_data = ""
             with open(cert_path, "r") as inf:
-                cert_data = inf.read()
-            with open(key_path, "r") as inf:
-                key_data = inf.read()
-
-            return {"certificate": cert_data, "key": key_data}
+                return inf.read()
 
         console.print("[red][bold]Pairing code did not match; pairing failed!")
         abort(401)
