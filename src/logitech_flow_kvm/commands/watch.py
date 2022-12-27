@@ -25,7 +25,6 @@ class Watch(LogitechFlowKvmCommand):
         parser.add_argument("--on-disconnect-execute", "-d", nargs="*")
         parser.add_argument("--on-connect-execute", "-c", nargs="*")
         parser.add_argument("device")
-        parser.add_argument("host")
 
     def execute_commands(self, option) -> None:
         if option:
