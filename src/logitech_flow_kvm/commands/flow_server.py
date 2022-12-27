@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from functools import partial
 
+import pyperclip
 from flask import Flask
 from flask import abort
 from flask import request
@@ -179,6 +180,16 @@ def bind_routes(app: FlowServerAPI) -> None:
 
         console.print("[red][bold]Pairing code did not match; pairing failed!")
         abort(401)
+
+    @app.route("/clipboard", methods=["PUT", "GET"])
+    def clipboard():
+        if request.method == "GET":
+            return pyperclip.paste()
+        elif request.method == "PUT":
+            pyperclip.copy(request.data)
+            return ""
+
+        abort(405)
 
 
 class FlowServer(LogitechFlowKvmCommand):

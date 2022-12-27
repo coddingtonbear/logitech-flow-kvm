@@ -6,6 +6,7 @@ from argparse import ArgumentParser
 from functools import partial
 from typing import Literal
 
+import pyperclip
 import requests
 import urllib3
 from logitech_receiver import Device
@@ -67,10 +68,18 @@ class FlowClient(LogitechFlowKvmCommand):
                     data=str(self.options.host_number),
                 )
                 response.raise_for_status()
+
+                clipboard_response = self.request("GET", self.build_url("clipboard"))
+                if clipboard_response.ok:
+                    pyperclip.copy(clipboard_response.text)
             else:
                 self.console.print(f":x: [bold]Device {device.id} disconnected")
 
                 if device.id == self.leader_id:
+                    self.request(
+                        "PUT", self.build_url("clipboard"), data=pyperclip.paste()
+                    )
+
                     time.sleep(self.options.sleep_time)
 
                     response = self.request("GET", self.build_url("device", device.id))

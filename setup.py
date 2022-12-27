@@ -89,6 +89,7 @@ setup(
         "pyopenssl>=22.1.0,<23",
         "appdirs>=1.4.4,<2.0",
         "netifaces>=0.11.0,<2.0",
+        "pyperclip>=1.8.2,<2.0",
     ],
     extras_require={
         # eg:
