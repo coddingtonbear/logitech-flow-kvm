@@ -88,6 +88,7 @@ setup(
         "rich>=12.6.0,<13",
         "pyopenssl>=22.1.0,<23",
         "appdirs>=1.4.4,<2.0",
+        "netifaces>=0.11.0,<2.0",
     ],
     extras_require={
         # eg:

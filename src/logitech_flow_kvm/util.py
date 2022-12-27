@@ -7,6 +7,7 @@ from typing import TypedDict
 from typing import cast
 
 import appdirs
+import netifaces
 from bitstruct import unpack_dict
 from hidapi.udev import DeviceInfo
 from logitech_receiver import Device
@@ -127,12 +128,28 @@ def get_valid_filename(s: str):
     return re.sub(r"(?u)[^-\w.]", "", s)
 
 
-def get_certificate_key_path(
-    name: str, create=False, data: tuple[str, str] | None = None
-) -> tuple[str, str]:
-    if data is not None and create is False:
-        raise Exception("If certificate `data` is provided, `create` must be `True`.")
+def get_all_ips() -> list[str]:
+    ips = set()
 
+    for interface in netifaces.interfaces():
+        try:
+            ips.add(netifaces.ifaddresses(interface)[netifaces.AF_INET][0]["addr"])
+        except KeyError:
+            pass
+
+    return list(ips)
+
+
+def get_host_certificate_path(name: str) -> str:
+    user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
+    os.makedirs(user_data_dir, exist_ok=True)
+
+    server_filename = get_valid_filename(name)
+
+    return os.path.join(user_data_dir, f"{server_filename}.cert")
+
+
+def get_certificate_key_path(name: str, create=False) -> tuple[str, str]:
     user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
 
     os.makedirs(user_data_dir, exist_ok=True)
@@ -143,37 +160,38 @@ def get_certificate_key_path(
     key_path = os.path.join(user_data_dir, f"{name}.key")
     if not (os.path.exists(cert_path) and os.path.exists(key_path)):
         if create:
-            cert_data = ""
-            key_data = ""
+            key = crypto.PKey()
+            key.generate_key(crypto.TYPE_RSA, 4096)
 
-            if data is None:
-                key = crypto.PKey()
-                key.generate_key(crypto.TYPE_RSA, 4096)
+            cert = crypto.X509()
+            subject = cert.get_subject()
+            subject.C = "US"
+            subject.ST = "WA"
+            subject.L = "Seattle"
+            subject.O = "coddingtonbear"  # noqa: E741
+            subject.OU = "logitech-flow-kvm"
+            subject.emailAddress = "none@none.com"
 
-                cert = crypto.X509()
-                subject = cert.get_subject()
-                subject.C = "US"
-                subject.ST = "WA"
-                subject.L = "Seattle"
-                subject.O = "coddingtonbear"  # noqa: E741
-                subject.OU = "logitech-flow-kvm"
-                subject.emailAddress = "none@none.com"
-                cert.set_serial_number(uuid.uuid4().int)
-                cert.gmtime_adj_notBefore(0)
-                cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
-                cert.set_issuer(subject)
-                cert.set_pubkey(key)
-                cert.sign(key, "sha512")
+            names = [f"IP:{addr}" for addr in get_all_ips()]
+            cert.add_extensions(
+                [
+                    crypto.X509Extension(
+                        b"subjectAltName", False, ",".join(names).encode("utf-8")
+                    )
+                ]
+            )
 
-                cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, cert).decode(
-                    "utf-8"
-                )
-                key_data = crypto.dump_privatekey(crypto.FILETYPE_PEM, key).decode(
-                    "utf-8"
-                )
-            else:
-                cert_data = data[0]
-                key_data = data[1]
+            cert.set_serial_number(uuid.uuid4().int)
+            cert.gmtime_adj_notBefore(0)
+            cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)
+            cert.set_issuer(subject)
+            cert.set_pubkey(key)
+            cert.sign(key, "sha512")
+
+            cert_data = crypto.dump_certificate(crypto.FILETYPE_PEM, cert).decode(
+                "utf-8"
+            )
+            key_data = crypto.dump_privatekey(crypto.FILETYPE_PEM, key).decode("utf-8")
 
             with open(cert_path, "wt") as f:
                 f.write(cert_data)

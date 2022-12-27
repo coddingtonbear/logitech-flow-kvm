@@ -1,3 +1,4 @@
+import os
 import random
 import string
 import time
@@ -6,19 +7,19 @@ from functools import partial
 from typing import Literal
 
 import requests
+import urllib3
 from logitech_receiver import Device
 from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from urllib3.exceptions import InsecureRequestWarning
 
 from .. import constants
 from .. import exceptions
 from ..util import change_device_host
-from ..util import get_certificate_key_path
-from ..util import get_valid_filename
+from ..util import get_host_certificate_path
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
@@ -31,7 +32,7 @@ class Listener(EventsListener):
 class FlowClient(LogitechFlowKvmCommand):
     leader_id: str
     follower_ids: list[str]
-    cert_and_key: tuple[str, str] | None = None
+    cert: str | None = None
 
     device_status: dict[Receiver, dict[Device, int]] = {}
 
@@ -94,54 +95,59 @@ class FlowClient(LogitechFlowKvmCommand):
     def request(
         self, method: Literal["GET", "PUT", "OPTIONS", "POST"], url: str, **kwargs
     ) -> requests.Response:
+        if "verify" not in kwargs:
+            kwargs["verify"] = self.cert
+
         try:
-            return requests.request(method, url, cert=self.cert_and_key, **kwargs)
+            return requests.request(method, url, **kwargs)
         except requests.exceptions.SSLError:
             raise exceptions.ServerNotPaired()
 
-    def get_certificate_key_path(self) -> tuple[str, str]:
-        try:
-            cert, key = get_certificate_key_path(
-                get_valid_filename(self.options.server)
-            )
-            return cert, key
-        except exceptions.NoCertificateAvailable:
-            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+    def pair(self) -> None:
+        urllib3.disable_warnings(InsecureRequestWarning)
 
-            self.console.print(
-                f"[magenta]Pairing with new server {self.options.server}..."
-            )
-            response = self.request("OPTIONS", self.build_url("pairing"), verify=False)
-            if not response.ok:
-                raise exceptions.ServerNotAvailable(self.options.server)
+        self.console.print(f"[magenta]Pairing with new server {self.options.server}...")
+        response = self.request("OPTIONS", self.build_url("pairing"), verify=False)
+        if not response.ok:
+            raise exceptions.ServerNotAvailable(self.options.server)
 
-            pairing_code = "".join(random.choices(string.digits, k=6))
-            self.console.print(
-                f"[magenta]Pairing code: [bold][bright_magenta]{pairing_code}"
-            )
-            self.console.print(
-                "[magenta]To complete the pairing process, enter the above code "
-                "into the server console running `flow-server` when requested."
-            )
+        pairing_code = "".join(random.choices(string.digits, k=6))
+        self.console.print(
+            f"[magenta]Pairing code: [bold][bright_magenta]{pairing_code}"
+        )
+        self.console.print(
+            "[magenta]To complete the pairing process, enter the above code "
+            "into the server console running `flow-server` when requested."
+        )
 
-            response = self.request(
-                "POST", self.build_url("pairing"), verify=False, data=pairing_code
-            )
-            if response.ok:
-                data = response.json()
-                cert, key = get_certificate_key_path(
-                    get_valid_filename(self.options.server),
-                    create=True,
-                    data=(data["certificate"], data["key"]),
-                )
-                return cert, key
-            else:
-                raise exceptions.PairingFailed()
+        response = self.request(
+            "POST", self.build_url("pairing"), verify=False, data=pairing_code
+        )
+        if not response.ok:
+            raise exceptions.PairingFailed()
+
+        cert_path = get_host_certificate_path(self.options.server)
+        with open(cert_path, "w") as outf:
+            outf.write(response.text)
+
+    def get_certificate_path(self) -> str:
+        cert_path = get_host_certificate_path(self.options.server)
+        if os.path.exists(cert_path):
+            try:
+                self.request("OPTIONS", self.build_url("pairing"), verify=False)
+            except requests.exceptions.SSLError:
+                self.pair()
+            except requests.exceptions.RequestException:
+                raise exceptions.ServerNotAvailable()
+        else:
+            self.pair()
+
+        return cert_path
 
     def handle(self):
         self.console = Console()
 
-        self.cert_and_key = self.get_certificate_key_path()
+        self.cert = self.get_certificate_path()
 
         self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
         result = self.request("GET", self.build_url("configuration"))
