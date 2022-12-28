@@ -84,7 +84,9 @@ class FlowServerAPI(Flask):
 
         user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
 
-        self.db = sqlite3.Connection(os.path.join(user_data_dir, "tokens.db"))
+        self.db = sqlite3.Connection(
+            os.path.join(user_data_dir, "tokens.db"), check_same_thread=False
+        )
         self.migrate_db()
 
         super().__init__(*args, **kwargs)
@@ -121,7 +123,7 @@ class FlowServerAPI(Flask):
     def verify_auth_token(self, token: str) -> bool:
         cursor = self.db.cursor()
 
-        cursor.execute("""SELECT name FROM tokens WHERE token = ?""", token)
+        cursor.execute("""SELECT name FROM tokens WHERE token = ?""", (token,))
 
         results = cursor.fetchall()
 
@@ -193,14 +195,15 @@ def bind_routes(app: FlowServerAPI) -> None:
         )
         typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
 
-        if (
-            typed_pairing_code.strip().upper()
-            == request.data.decode("utf-8").strip().upper()
-        ):
+        request_data = request.json()
+
+        if typed_pairing_code.strip().upper() == request_data["pairing_code"].upper():
             console.print("[magenta]Paired successfully")
             cert_path, _ = get_certificate_key_path("server", create=True)
 
-            response_data: dict = {"token": app.create_new_auth_token()}
+            response_data: dict = {
+                "token": app.create_new_auth_token(request_data["name"])
+            }
 
             with open(cert_path, "r") as inf:
                 response_data["certificate"] = inf.read()

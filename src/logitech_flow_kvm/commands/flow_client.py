@@ -1,3 +1,4 @@
+import json
 import os
 import random
 import string
@@ -139,7 +140,13 @@ class FlowClient(LogitechFlowKvmCommand):
         )
 
         response = self.request(
-            "POST", self.build_url("pairing"), verify=False, data=pairing_code
+            "POST",
+            self.build_url("pairing"),
+            verify=False,
+            data=json.dumps(
+                {"name": self.options.host_number, "pairing_code": pairing_code}
+            ),
+            headers={"Content-type": "application/json"},
         )
         if not response.ok:
             raise exceptions.PairingFailed()
