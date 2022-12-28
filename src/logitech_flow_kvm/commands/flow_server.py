@@ -110,7 +110,11 @@ class FlowServerAPI(Flask):
         new_token = str(uuid.uuid4())
         cursor.execute(
             """
-            INSERT INTO tokens (name, token) VALUES (?, ?);
+            INSERT INTO tokens (name, token)
+            VALUES (?, ?)
+            ON CONFLICT (name) DO UPDATE SET
+                token=excluded.token
+            ;
         """,
             (name, new_token),
         )
@@ -195,7 +199,7 @@ def bind_routes(app: FlowServerAPI) -> None:
         )
         typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
 
-        request_data = request.json()
+        request_data = request.json
 
         if typed_pairing_code.strip().upper() == request_data["pairing_code"].upper():
             console.print("[magenta]Paired successfully")
