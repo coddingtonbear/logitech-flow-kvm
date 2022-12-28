@@ -1,10 +1,15 @@
+import os
+import sqlite3
+import uuid
 from argparse import ArgumentParser
 from functools import partial
 
+import appdirs
 import pyperclip
 from flask import Flask
 from flask import abort
 from flask import request
+from flask_httpauth import HTTPTokenAuth
 from logitech_receiver import Device
 from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
@@ -42,6 +47,8 @@ class FlowServerAPI(Flask):
 
     console: Console = Console()
 
+    db: sqlite3.Connection
+
     def __init__(
         self,
         *args,
@@ -75,7 +82,54 @@ class FlowServerAPI(Flask):
         for listener in self.listeners:
             listener.start()
 
+        user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
+
+        self.db = sqlite3.Connection(os.path.join(user_data_dir, "tokens.db"))
+        self.migrate_db()
+
         super().__init__(*args, **kwargs)
+
+    def migrate_db(self) -> None:
+        cursor = self.db.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tokens (
+                name string primary key,
+                token string
+            );
+        """
+        )
+        self.db.commit()
+        cursor.close()
+
+    def create_new_auth_token(self, name: str) -> str:
+        cursor = self.db.cursor()
+
+        new_token = str(uuid.uuid4())
+        cursor.execute(
+            """
+            INSERT INTO tokens (name, token) VALUES (?, ?);
+        """,
+            (name, new_token),
+        )
+
+        self.db.commit()
+        cursor.close()
+
+        return new_token
+
+    def verify_auth_token(self, token: str) -> bool:
+        cursor = self.db.cursor()
+
+        cursor.execute("""SELECT name FROM tokens WHERE token = ?""", token)
+
+        results = cursor.fetchall()
+
+        if len(results) > 0:
+            # Return the username (probably a host index)
+            return results[0][0]
+
+        return False
 
     def callback(self, receiver: Receiver, msg: _HIDPP_Notification) -> None:
         if msg.sub_id == 0x41:
@@ -122,40 +176,11 @@ class FlowServerAPI(Flask):
 
 
 def bind_routes(app: FlowServerAPI) -> None:
-    @app.get("/configuration")
-    def configuration():
-        response: dict = {}
+    auth = HTTPTokenAuth(scheme="Bearer")
 
-        response["leader"] = app.leader_device.id
-        response["followers"] = [device.id for device in app.follower_devices]
-
-        return response
-
-    @app.get("/device")
-    def device_status():
-        response: dict = {}
-
-        for devices in app.device_status.values():
-            for device, status in devices.items():
-                response[device.id] = status
-
-        return response
-
-    @app.route("/device/<id>", methods=["GET", "PUT"])
-    def device_status_detail(id: str):
-        if request.method == "GET":
-            for devices in app.device_status.values():
-                for device, status in devices.items():
-                    if device.id == id:
-                        return str(status)
-            abort(404)
-        elif request.method == "PUT":
-            try:
-                app.remote_device_status_change(id, int(request.data))
-                return ""
-            except UnknownDevice:
-                abort(404)
-        abort(405)
+    @auth.verify_token
+    def verify_token(token: str):
+        return app.verify_auth_token(token)
 
     @app.route("/pairing", methods=["POST"])
     def pair():
@@ -175,13 +200,56 @@ def bind_routes(app: FlowServerAPI) -> None:
             console.print("[magenta]Paired successfully")
             cert_path, _ = get_certificate_key_path("server", create=True)
 
+            response_data: dict = {"token": app.create_new_auth_token()}
+
             with open(cert_path, "r") as inf:
-                return inf.read()
+                response_data["certificate"] = inf.read()
+
+            return response_data
 
         console.print("[red][bold]Pairing code did not match; pairing failed!")
         abort(401)
 
+    @app.get("/configuration")
+    @auth.login_required
+    def configuration():
+        response: dict = {}
+
+        response["leader"] = app.leader_device.id
+        response["followers"] = [device.id for device in app.follower_devices]
+
+        return response
+
+    @app.get("/device")
+    @auth.login_required
+    def device_status():
+        response: dict = {}
+
+        for devices in app.device_status.values():
+            for device, status in devices.items():
+                response[device.id] = status
+
+        return response
+
+    @app.route("/device/<id>", methods=["GET", "PUT"])
+    @auth.login_required
+    def device_status_detail(id: str):
+        if request.method == "GET":
+            for devices in app.device_status.values():
+                for device, status in devices.items():
+                    if device.id == id:
+                        return str(status)
+            abort(404)
+        elif request.method == "PUT":
+            try:
+                app.remote_device_status_change(id, int(request.data))
+                return ""
+            except UnknownDevice:
+                abort(404)
+        abort(405)
+
     @app.route("/clipboard", methods=["PUT", "GET"])
+    @auth.login_required
     def clipboard():
         console = Console()
 

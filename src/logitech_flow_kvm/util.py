@@ -1,6 +1,8 @@
+import json
 import os
 import re
 import uuid
+from json.decoder import JSONDecodeError
 from typing import Any
 from typing import Iterable
 from typing import TypedDict
@@ -147,6 +149,42 @@ def get_host_certificate_path(name: str) -> str:
     server_filename = get_valid_filename(name)
 
     return os.path.join(user_data_dir, f"{server_filename}.cert")
+
+
+def get_host_token_path(name: str) -> str:
+    user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
+    os.makedirs(user_data_dir, exist_ok=True)
+
+    server_filename = get_valid_filename(name)
+
+    return os.path.join(user_data_dir, f"{server_filename}.json")
+
+
+def get_host_certificate_path_and_token(name: str) -> tuple[str, str | None]:
+    certificate_path = get_host_certificate_path(name)
+    token_path = get_host_token_path(name)
+
+    token: str | None = None
+
+    try:
+        with open(token_path, "r") as inf:
+            token_data = json.load(inf)
+            token = token_data["token"]
+    except (FileNotFoundError, JSONDecodeError):
+        pass
+
+    return certificate_path, token
+
+
+def set_host_certificate_and_token(name: str, certificate: str, token: str) -> None:
+    certificate_path = get_host_certificate_path(name)
+    token_path = get_host_token_path(name)
+
+    with open(certificate_path, "w") as outf:
+        outf.write(certificate)
+
+    with open(token_path, "w") as outf:
+        json.dump({"token": token}, outf)
 
 
 def get_certificate_key_path(name: str, create=False) -> tuple[str, str]:

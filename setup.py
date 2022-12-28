@@ -84,6 +84,7 @@ setup(
         "bitstruct>=8.15.1,<9.0",
         "safdie>=2.0.1,<3.0",
         "flask>=2.2.2,<3.0",
+        "flask-httpauth>=4.7.0,<5.0",
         "requests>=2.28,<3.0",
         "rich>=12.6.0,<13",
         "pyopenssl>=22.1.0,<23",
