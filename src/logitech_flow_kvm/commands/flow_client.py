@@ -163,8 +163,8 @@ class FlowClient(LogitechFlowKvmCommand):
         if os.path.exists(cert_path):
             try:
                 response = self.request(
-                    "OPTIONS",
-                    self.build_url("pairing"),
+                    "GET",
+                    self.build_url("configuration"),
                     verify=cert_path,
                     headers={"Authorization": f"Bearer {token}"},
                 )
