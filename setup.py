@@ -24,7 +24,7 @@ def read(*names, **kwargs):
 
 setup(
     name="logitech-flow-kvm",
-    version="1.1.0",
+    version="1.2.0",
     license="MIT",
     description=(
         "Quickly switch between paired devices when using a mouse"
