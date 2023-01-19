@@ -81,7 +81,9 @@ class FlowClient(LogitechFlowKvmCommand):
                 if device.id == self.leader_id:
                     clipboard_data = pyperclip.paste()
                     clipboard_response = self.request(
-                        "PUT", self.build_url("clipboard"), data=clipboard_data
+                        "PUT",
+                        self.build_url("clipboard"),
+                        data=clipboard_data.encode("utf-8"),
                     )
                     if clipboard_response.ok:
                         self.console.print(
