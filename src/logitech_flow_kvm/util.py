@@ -82,6 +82,9 @@ def get_devices() -> Iterable[Device | None]:
     for idx in range(max_devices):
         for device_info in cast(Iterable[DeviceInfo], receivers()):
             receiver = Receiver.open(device_info)
+            if idx >= receiver.max_devices:
+                continue
+
             try:
                 yield Device(receiver, idx + 1)
             except NoSuchDevice:
