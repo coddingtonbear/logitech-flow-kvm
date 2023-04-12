@@ -1,35 +1,11 @@
-from typing import cast, Iterable
-
-from logitech_receiver import Device, Receiver
-from logitech_receiver.base import receivers, NoSuchDevice
-from hidapi.udev import DeviceInfo
-
+from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
-from rich.console import Console
 
-from ..util import get_device_id
+from ..util import get_device_path
+from ..util import get_devices
+from ..util import get_theoretical_max_device_count
 from . import LogitechFlowKvmCommand
-
-
-def get_theoretical_max_device_count() -> int:
-    max_count = 0
-
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        receiver = Receiver.open(device_info)
-        max_count += receiver.max_devices
-
-    return max_count
-
-
-def get_devices() -> Iterable[Device | None]:
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        receiver = Receiver.open(device_info)
-        for idx in range(receiver.max_devices):
-            try:
-                yield Device(receiver, idx + 1)
-            except NoSuchDevice:
-                yield None
 
 
 class ListDevices(LogitechFlowKvmCommand):
@@ -39,9 +15,9 @@ class ListDevices(LogitechFlowKvmCommand):
         table.add_column("ID")
         table.add_column("Product")
         table.add_column("Name")
-        table.add_column("Serial")
+        table.add_column("Path")
 
-        with Progress() as progress:
+        with Progress(transient=True) as progress:
             enumerate_task = progress.add_task(
                 "Finding devices...", total=get_theoretical_max_device_count()
             )
@@ -50,10 +26,10 @@ class ListDevices(LogitechFlowKvmCommand):
                 progress.advance(enumerate_task)
                 if possible_device is not None:
                     table.add_row(
-                        get_device_id(possible_device),
+                        possible_device.serial,
                         possible_device.wpid or possible_device.product_id,
                         possible_device.name or possible_device.codename or "",
-                        possible_device.serial,
+                        get_device_path(possible_device),
                     )
 
         console = Console()

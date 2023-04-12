@@ -6,7 +6,7 @@ from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
-from ..util import get_device_by_id
+from ..util import get_device_by_path
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
@@ -55,7 +55,7 @@ class Watch(LogitechFlowKvmCommand):
                 self.execute_commands(self.options.on_disconnect_execute)
 
     def handle(self) -> None:
-        device = get_device_by_id(self.options.device)
+        device = get_device_by_path(self.options.device)
         self.device = device
 
         self.console.print(

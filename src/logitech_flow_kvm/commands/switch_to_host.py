@@ -1,7 +1,8 @@
 from argparse import ArgumentParser
 
+from ..util import change_device_host
+from ..util import get_device_by_path
 from . import LogitechFlowKvmCommand
-from ..util import get_device_by_id, change_device_host
 
 
 class SwitchToHost(LogitechFlowKvmCommand):
@@ -11,6 +12,6 @@ class SwitchToHost(LogitechFlowKvmCommand):
         parser.add_argument("host", type=int)
 
     def handle(self) -> None:
-        device = get_device_by_id(self.options.device)
+        device = get_device_by_path(self.options.device)
 
         change_device_host(device, self.options.host)

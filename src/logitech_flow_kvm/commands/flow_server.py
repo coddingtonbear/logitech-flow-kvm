@@ -15,13 +15,16 @@ from logitech_receiver import Receiver
 from logitech_receiver.base import _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
+from rich.progress import Progress
 from rich.prompt import Prompt
 from rich.table import Table
 
 from .. import constants
+from .. import exceptions
 from ..util import change_device_host
 from ..util import get_certificate_key_path
-from ..util import get_device_by_id
+from ..util import get_devices
+from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
@@ -282,10 +285,32 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def handle(self) -> None:
-        leader_device = get_device_by_id(self.options.leader_device)
+        device_id_map: dict[str, Device] = {
+            self.options.leader_device: None,
+            **{follower: None for follower in self.options.follower_devices},
+        }
+        with Progress(transient=True) as progress:
+            enumerate_task = progress.add_task(
+                "Finding devices...", total=get_theoretical_max_device_count()
+            )
+
+            for possible_device in get_devices():
+                progress.advance(enumerate_task)
+                if possible_device is not None:
+                    if possible_device.serial in device_id_map:
+                        device_id_map[possible_device.serial] = possible_device
+
+                if None not in device_id_map.values():
+                    break
+
+        for device_id, device_path in device_id_map.items():
+            if device_path is None:
+                raise exceptions.DeviceNotFound(device_id)
+
+        leader_device = device_id_map[self.options.leader_device]
         follower_devices = []
         for device in self.options.follower_devices:
-            follower_devices.append(get_device_by_id(device))
+            follower_devices.append(device_id_map[device])
 
         cert_path, key_path = get_certificate_key_path("server", create=True)
 
@@ -295,12 +320,10 @@ class FlowServer(LogitechFlowKvmCommand):
         table.add_column("Setting Name")
         table.add_column("Setting Value")
 
-        table.add_row("Leader", str(get_device_by_id(self.options.leader_device)))
+        table.add_row("Leader", str(self.options.leader_device))
         table.add_row(
             "Followers",
-            "\n".join(
-                [str(get_device_by_id(dev)) for dev in self.options.follower_devices]
-            ),
+            "\n".join([str(dev) for dev in self.options.follower_devices]),
         )
         table.add_row("Certificate", cert_path)
         table.add_row("Key", key_path)

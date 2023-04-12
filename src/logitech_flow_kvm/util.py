@@ -13,6 +13,7 @@ import netifaces
 from bitstruct import unpack_dict
 from hidapi.udev import DeviceInfo
 from logitech_receiver import Device
+from logitech_receiver import NoSuchDevice
 from logitech_receiver import Receiver
 from logitech_receiver.base import receivers
 from logitech_receiver.settings_templates import check_feature_setting
@@ -66,16 +67,37 @@ class DeviceStatus(TypedDict):
     wireless_id: bytes
 
 
-def get_device_id(device: Device) -> str:
+def get_theoretical_max_device_count() -> int:
+    max_count = 0
+
+    for device_info in cast(Iterable[DeviceInfo], receivers()):
+        receiver = Receiver.open(device_info)
+        max_count += receiver.max_devices
+
+    return max_count
+
+
+def get_devices() -> Iterable[Device | None]:
+    max_devices = 32
+    for idx in range(max_devices):
+        for device_info in cast(Iterable[DeviceInfo], receivers()):
+            receiver = Receiver.open(device_info)
+            try:
+                yield Device(receiver, idx + 1)
+            except NoSuchDevice:
+                yield None
+
+
+def get_device_path(device: Device) -> str:
     if device.receiver:
         return f"{device.receiver.path}:{device.number}"
     return device.path
 
 
-def get_device_by_id(device_id: str) -> Device:
+def get_device_by_path(device_path: str) -> Device:
     for device_info in cast(Iterable[DeviceInfo], receivers()):
-        if ":" in device_id:
-            receiver_id, device_idx = device_id.split(":")
+        if ":" in device_path:
+            receiver_id, device_idx = device_path.split(":")
 
             if receiver_id == device_info.path:
                 receiver = Receiver.open(device_info)
@@ -84,10 +106,10 @@ def get_device_by_id(device_id: str) -> Device:
                     break
                 return device
         else:
-            if device_id == device_info.path:
+            if device_path == device_info.path:
                 return Device.open(device_info)
 
-    raise DeviceNotFound(device_id)
+    raise DeviceNotFound(device_path)
 
 
 def parse_connection_status(data: bytes) -> DeviceStatus:
