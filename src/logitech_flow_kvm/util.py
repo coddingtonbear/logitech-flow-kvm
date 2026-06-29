@@ -238,9 +238,10 @@ def get_certificate_key_path(name: str, create=False) -> tuple[str, str]:
             names = [f"IP:{addr}" for addr in get_all_ips()]
             cert.add_extensions(
                 [
+                    crypto.X509Extension(b"basicConstraints", True, b"CA:TRUE"),
                     crypto.X509Extension(
                         b"subjectAltName", False, ",".join(names).encode("utf-8")
-                    )
+                    ),
                 ]
             )
 
