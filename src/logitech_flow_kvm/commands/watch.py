@@ -1,8 +1,8 @@
 import subprocess
 from argparse import ArgumentParser
 
-from logitech_receiver import Device
-from logitech_receiver.base import _HIDPP_Notification
+from logitech_receiver.device import Device
+from logitech_receiver.base import HIDPPNotification as _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 

@@ -7,12 +7,13 @@ from argparse import ArgumentParser
 from functools import partial
 from typing import Literal
 
+import logitech_receiver.base as _lr_base
 import pyperclip
 import requests
 import urllib3
-from logitech_receiver import Device
-from logitech_receiver import Receiver
-from logitech_receiver.base import _HIDPP_Notification
+from logitech_receiver.device import Device
+from logitech_receiver.receiver import Receiver, create_receiver
+from logitech_receiver.base import HIDPPNotification as _HIDPP_Notification
 from logitech_receiver.base import receivers
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
@@ -195,10 +196,10 @@ class FlowClient(LogitechFlowKvmCommand):
         self.follower_ids = response["followers"]
 
         for receiver_info in receivers():
-            receiver = Receiver.open(receiver_info)
-
-            listener = Listener(receiver, partial(self.callback, receiver))
-            listener.start()
+            receiver = create_receiver(_lr_base, receiver_info)
+            if receiver:
+                listener = Listener(receiver, partial(self.callback, receiver))
+                listener.start()
 
         table = Table()
         table.add_column("Setting Name")

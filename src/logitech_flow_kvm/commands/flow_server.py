@@ -10,9 +10,9 @@ from flask import Flask
 from flask import abort
 from flask import request
 from flask_httpauth import HTTPTokenAuth
-from logitech_receiver import Device
-from logitech_receiver import Receiver
-from logitech_receiver.base import _HIDPP_Notification
+from logitech_receiver.device import Device
+from logitech_receiver.receiver import Receiver
+from logitech_receiver.base import HIDPPNotification as _HIDPP_Notification
 from logitech_receiver.listener import EventsListener
 from rich.console import Console
 from rich.progress import Progress

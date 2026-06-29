@@ -8,13 +8,14 @@ from typing import Iterable
 from typing import TypedDict
 from typing import cast
 
+import logitech_receiver.base as _lr_base
 import appdirs
 import netifaces
 from bitstruct import unpack_dict
-from hidapi.udev import DeviceInfo
-from logitech_receiver import Device
-from logitech_receiver import NoSuchDevice
-from logitech_receiver import Receiver
+from hidapi.common import DeviceInfo
+from logitech_receiver.device import Device, create_device
+from logitech_receiver.exceptions import NoSuchDevice
+from logitech_receiver.receiver import Receiver, create_receiver
 from logitech_receiver.base import receivers
 from logitech_receiver.settings_templates import check_feature_setting
 from OpenSSL import crypto
@@ -71,8 +72,9 @@ def get_theoretical_max_device_count() -> int:
     max_count = 0
 
     for device_info in cast(Iterable[DeviceInfo], receivers()):
-        receiver = Receiver.open(device_info)
-        max_count += receiver.max_devices
+        receiver = create_receiver(_lr_base, device_info)
+        if receiver:
+            max_count += receiver.max_devices
 
     return max_count
 
@@ -81,12 +83,12 @@ def get_devices() -> Iterable[Device | None]:
     max_devices = 32
     for idx in range(max_devices):
         for device_info in cast(Iterable[DeviceInfo], receivers()):
-            receiver = Receiver.open(device_info)
-            if idx >= receiver.max_devices:
+            receiver = create_receiver(_lr_base, device_info)
+            if not receiver or idx >= receiver.max_devices:
                 continue
 
             try:
-                yield Device(receiver, idx + 1)
+                yield receiver[idx + 1]
             except NoSuchDevice:
                 yield None
 
@@ -98,19 +100,22 @@ def get_device_path(device: Device) -> str:
 
 
 def get_device_by_path(device_path: str) -> Device:
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        if ":" in device_path:
-            receiver_id, device_idx = device_path.split(":")
+    receiver_path, _, idx_str = device_path.rpartition(":")
+    if receiver_path and idx_str.isdigit():
+        for device_info in cast(Iterable[DeviceInfo], receivers()):
+            if receiver_path == device_info.path:
+                receiver = create_receiver(_lr_base, device_info)
+                if receiver:
+                    device = receiver[int(idx_str)]
+                    if device:
+                        return device
+                break
 
-            if receiver_id == device_info.path:
-                receiver = Receiver.open(device_info)
-                device = receiver[int(device_idx)]
-                if not device:
-                    break
+    for device_info in cast(Iterable[DeviceInfo], receivers()):
+        if device_path == device_info.path:
+            device = create_device(_lr_base, device_info)
+            if device:
                 return device
-        else:
-            if device_path == device_info.path:
-                return Device.open(device_info)
 
     raise DeviceNotFound(device_path)
 
@@ -146,7 +151,9 @@ def change_device_host(device: Device, host: int) -> None:
     target_value = select_choice(str(host), setting.choices, setting, None)
     result = setting.write(target_value, save=False)
 
-    if not result or result != target_value:
+    # A successful host switch causes the device to immediately disconnect,
+    # so the write confirmation may not be returned. Treat None as success.
+    if result is not None and result != target_value:
         raise ChangeHostFailed()
 
 
