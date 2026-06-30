@@ -1,6 +1,7 @@
 import sys
 import logging.config
 
+from logitech_flow_kvm import _platform_patches  # must be first, before logitech_receiver imports  # noqa: F401
 from safdie import SafdieRunner
 
 
