@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import subprocess
+import sys
 import uuid
 from argparse import ArgumentParser
 from functools import partial
@@ -181,7 +183,64 @@ class FlowServerAPI(Flask):
         if self.leader_device.id == id:
             for device in self.follower_devices:
                 self.console.print(f"Asking follower {device} to switch to {new_host}")
-                change_device_host(device, new_host)
+                try:
+                    change_device_host(device, new_host)
+                except Exception as exc:
+                    self.console.print(f"[red]Failed to switch {device}: {exc}")
+
+
+def _ask_pairing_code(remote_addr: str, console: Console) -> str:
+    """Prompt for the pairing code, preferring a GUI dialog over the terminal.
+
+    On macOS uses osascript; on Linux tries zenity then kdialog. Falls back
+    to the terminal prompt so foreground use still works.
+    """
+    title = "Logitech Flow KVM — Pairing"
+
+    if sys.platform == "darwin":
+        # AppleScript uses & return & for newlines in string literals.
+        script = (
+            f'text returned of (display dialog '
+            f'"Pairing request from {remote_addr}:" & return & return & '
+            f'"Enter the 6-digit code shown on the client:" '
+            f'default answer "" '
+            f'with title "{title}" buttons {{"Cancel", "OK"}} '
+            f'default button "OK" giving up after 120)'
+        )
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script], capture_output=True, text=True, timeout=125
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().upper()
+            if result.returncode != 0:
+                return ""  # user cancelled
+            # gave up after timeout with empty field — fall through to terminal
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    else:
+        text = f"Pairing request from {remote_addr}\n\nEnter the 6-digit code shown on the client:"
+        for cmd in [
+            ["zenity", "--entry", f"--title={title}", f"--text={text}"],
+            ["kdialog", "--inputbox", text, "", "--title", title],
+        ]:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode == 0:
+                    return result.stdout.strip().upper()
+                if result.stderr and any(
+                    w in result.stderr.lower()
+                    for w in ("display", "unable to init", "cannot connect")
+                ):
+                    continue  # display unavailable, try next tool
+                return ""  # user cancelled
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                break
+
+    console.print("[magenta]No GUI dialog available; enter the pairing code below.")
+    return Prompt.ask("[bright_magenta]Pairing code").strip().upper()
 
 
 def bind_routes(app: FlowServerAPI) -> None:
@@ -196,15 +255,13 @@ def bind_routes(app: FlowServerAPI) -> None:
         console = Console()
 
         console.print(
-            f"[magenta]Received pairing request from {request.remote_addr}; "
-            "a pairing code has been printed to the console running `flow-client` "
-            "enter that code below to complete the pairing process."
+            f"[magenta]Received pairing request from {request.remote_addr}"
         )
-        typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
+        typed_pairing_code = _ask_pairing_code(request.remote_addr, console)
 
         request_data = request.json
 
-        if typed_pairing_code.strip().upper() == request_data["pairing_code"].upper():
+        if typed_pairing_code == request_data["pairing_code"].upper():
             console.print("[magenta]Paired successfully")
             cert_path, _ = get_certificate_key_path("server", create=True)
 

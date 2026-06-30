@@ -26,7 +26,7 @@ class ListDevices(LogitechFlowKvmCommand):
                 progress.advance(enumerate_task)
                 if possible_device is not None:
                     table.add_row(
-                        possible_device.serial,
+                        possible_device.serial or getattr(possible_device, "hid_serial", None) or "",
                         possible_device.wpid or possible_device.product_id,
                         possible_device.name or possible_device.codename or "",
                         get_device_path(possible_device),

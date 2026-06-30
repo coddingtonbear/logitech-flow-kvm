@@ -16,7 +16,7 @@ from hidapi.common import DeviceInfo
 from logitech_receiver.device import Device, create_device
 from logitech_receiver.exceptions import NoSuchDevice
 from logitech_receiver.receiver import Receiver, create_receiver
-from logitech_receiver.base import receivers
+from logitech_receiver.base import receivers, receivers_and_devices
 from logitech_receiver.settings_templates import check_feature_setting
 from OpenSSL import crypto
 from solaar.cli.config import select_choice
@@ -76,6 +76,10 @@ def get_theoretical_max_device_count() -> int:
         if receiver:
             max_count += receiver.max_devices
 
+    for device_info in cast(Iterable[DeviceInfo], receivers_and_devices()):
+        if device_info.isDevice:
+            max_count += 1
+
     return max_count
 
 
@@ -86,20 +90,43 @@ def get_devices() -> Iterable[Device | None]:
             receiver = create_receiver(_lr_base, device_info)
             if not receiver or idx >= receiver.max_devices:
                 continue
-
             try:
                 yield receiver[idx + 1]
             except NoSuchDevice:
                 yield None
 
+    for device_info in cast(Iterable[DeviceInfo], receivers_and_devices()):
+        if device_info.isDevice:
+            device = create_device(_lr_base, device_info)
+            if device:
+                yield device
+
 
 def get_device_path(device: Device) -> str:
     if device.receiver:
         return f"{device.receiver.path}:{device.number}"
+    # Use serial as a stable identifier for directly-connected devices (e.g.
+    # Bluetooth), since IOKit/udev paths can change across reconnects.
+    serial = getattr(device, "hid_serial", None) or device.serial
+    if serial:
+        return f"bt:{serial}"
     return device.path
 
 
 def get_device_by_path(device_path: str) -> Device:
+    # bt:<serial> — stable identifier for directly-connected Bluetooth devices
+    if device_path.startswith("bt:"):
+        serial = device_path[3:]
+        for device_info in cast(Iterable[DeviceInfo], receivers_and_devices()):
+            if device_info.isDevice and device_info.serial == serial:
+                device = create_device(_lr_base, device_info)
+                if device:
+                    return device
+        raise DeviceNotFound(device_path)
+
+    # Check if this looks like a receiver:index path — split on the last colon
+    # and verify the prefix matches a known receiver before committing to that
+    # interpretation (device paths on macOS also contain colons).
     receiver_path, _, idx_str = device_path.rpartition(":")
     if receiver_path and idx_str.isdigit():
         for device_info in cast(Iterable[DeviceInfo], receivers()):
@@ -111,8 +138,9 @@ def get_device_by_path(device_path: str) -> Device:
                         return device
                 break
 
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        if device_path == device_info.path:
+    # Fall back: match by raw path for directly-connected devices
+    for device_info in cast(Iterable[DeviceInfo], receivers_and_devices()):
+        if device_info.isDevice and device_info.path == device_path:
             device = create_device(_lr_base, device_info)
             if device:
                 return device

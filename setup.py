@@ -79,7 +79,7 @@ setup(
     ],
     python_requires=">=3.6",
     install_requires=[
-        "solaar>=1.1.8,<2.0",
+        "solaar>=1.1.19,<2.0",
         "hid_parser==0.0.3",
         "bitstruct>=8.15.1,<9.0",
         "safdie>=2.0.1,<3.0",
