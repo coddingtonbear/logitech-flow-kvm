@@ -78,6 +78,7 @@ class FlowServerAPI(Flask):
             follower_devices,
             get_desired_host=self._get_desired_host,
             host_number=host_number,
+            on_error=self._reconciler_error,
         )
 
         # Listen to change events for all relevant devices, one listener per
@@ -201,6 +202,12 @@ class FlowServerAPI(Flask):
         """Record positive evidence that the leader is now on `new_host`."""
         self.events.set_state("leader-host", str(new_host))
         self.reconciler.poke()
+
+    def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
+        self.console.print(
+            f"[yellow]Could not switch {device.id} to the desired host "
+            f"yet ({error}); will retry"
+        )
 
 
 def bind_routes(app: FlowServerAPI) -> None:

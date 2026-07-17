@@ -129,6 +129,105 @@ class TestReconcileOnce:
         assert calls == [(device, 2)] * 3
 
 
+class TestReconcileOnceSurvivesFailures:
+    # Regression coverage: a live HID++ round-trip can fail for reasons that
+    # are entirely transient (e.g. the device is mid-roam and briefly
+    # unreachable) -- `change_device_host` raising must never kill the loop,
+    # since the whole guarantee this class provides comes from retrying
+    # forever. Losing the background thread to an uncaught exception here
+    # means "silently stop reconciling everything, permanently."
+
+    def test_a_failure_does_not_raise_out_of_reconcile_once(self, monkeypatch):
+        device = make_device()
+
+        def raise_cannot_change(d, h):
+            raise RuntimeError("device briefly unreachable")
+
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host", raise_cannot_change
+        )
+        reconciler = Reconciler([device], get_desired_host=lambda: 2, host_number=1)
+        reconciler.observe(device, connected=True)
+
+        reconciler.reconcile_once()  # must not raise
+
+    def test_a_failure_on_one_device_does_not_stop_the_others(self, monkeypatch):
+        failing = make_device(1)
+        working = make_device(2)
+        calls = []
+
+        def change(d, h):
+            if d is failing:
+                raise RuntimeError("device briefly unreachable")
+            calls.append((d, h))
+
+        monkeypatch.setattr("logitech_flow_kvm.reconciler.change_device_host", change)
+        reconciler = Reconciler(
+            [failing, working], get_desired_host=lambda: 2, host_number=1
+        )
+        reconciler.observe(failing, connected=True)
+        reconciler.observe(working, connected=True)
+
+        reconciler.reconcile_once()
+
+        assert calls == [(working, 2)]
+
+    def test_reconciliation_keeps_retrying_after_a_failure(self, monkeypatch):
+        device = make_device()
+        attempts = []
+
+        def flaky_then_working(d, h):
+            attempts.append(d)
+            if len(attempts) == 1:
+                raise RuntimeError("device briefly unreachable")
+
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host", flaky_then_working
+        )
+        reconciler = Reconciler([device], get_desired_host=lambda: 2, host_number=1)
+        reconciler.observe(device, connected=True)
+
+        reconciler.reconcile_once()  # fails
+        reconciler.reconcile_once()  # succeeds
+
+        assert attempts == [device, device]
+
+    def test_calls_on_error_with_the_device_and_exception(self, monkeypatch):
+        device = make_device()
+        error = RuntimeError("device briefly unreachable")
+
+        def raise_error(d, h):
+            raise error
+
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host", raise_error
+        )
+        seen = []
+        reconciler = Reconciler(
+            [device],
+            get_desired_host=lambda: 2,
+            host_number=1,
+            on_error=lambda d, e: seen.append((d, e)),
+        )
+        reconciler.observe(device, connected=True)
+
+        reconciler.reconcile_once()
+
+        assert seen == [(device, error)]
+
+    def test_on_error_is_optional(self, monkeypatch):
+        device = make_device()
+
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host",
+            lambda d, h: (_ for _ in ()).throw(RuntimeError("unreachable")),
+        )
+        reconciler = Reconciler([device], get_desired_host=lambda: 2, host_number=1)
+        reconciler.observe(device, connected=True)
+
+        reconciler.reconcile_once()  # must not raise despite no on_error given
+
+
 class TestObserve:
     def test_poke_wakes_a_waiting_run_loop(self):
         device = make_device()

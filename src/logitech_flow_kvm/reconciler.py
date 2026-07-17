@@ -39,11 +39,13 @@ class Reconciler(threading.Thread):
         devices: list[PairedDevice],
         get_desired_host: Callable[[], int | None],
         host_number: int,
+        on_error: Callable[[PairedDevice, Exception], None] | None = None,
     ):
         super().__init__(daemon=True)
         self._devices = devices
         self._get_desired_host = get_desired_host
         self._host_number = host_number
+        self._on_error = on_error
         self._connected: dict[PairedDevice, bool] = dict.fromkeys(devices, False)
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -74,5 +76,17 @@ class Reconciler(threading.Thread):
         if desired_host is None or desired_host == self._host_number:
             return
         for device in self._devices:
-            if self._connected[device]:
+            if not self._connected[device]:
+                continue
+            try:
                 change_device_host(device, desired_host)
+            except Exception as error:
+                # A device can easily be unreachable for the instant this
+                # live HID++ round-trip takes -- e.g. it's already mid-roam
+                # to somewhere else. That's normal, not fatal: the whole
+                # guarantee this loop provides comes from retrying forever,
+                # so one device's transient failure must never kill this
+                # thread (which would silently stop reconciling *every*
+                # device, forever) or skip the rest of this tick's devices.
+                if self._on_error is not None:
+                    self._on_error(device, error)

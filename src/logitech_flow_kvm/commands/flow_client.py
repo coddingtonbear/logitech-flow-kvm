@@ -106,6 +106,12 @@ class FlowClient(LogitechFlowKvmCommand):
                     f"{len(clipboard_data)} bytes of data"
                 )
 
+    def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
+        self.console.print(
+            f"[yellow]Could not switch {device.id} to the desired host "
+            f"yet ({error}); will retry"
+        )
+
     def _handle_event(self, event_type: str, data: str) -> None:
         if event_type == "leader-host":
             self.leader_host = int(data)
@@ -254,6 +260,7 @@ class FlowClient(LogitechFlowKvmCommand):
             self.follower_devices,
             get_desired_host=lambda: self.leader_host,
             host_number=self.options.host_number,
+            on_error=self._reconciler_error,
         )
         self.reconciler.start()
 
