@@ -36,20 +36,20 @@ On the computer you've decided to use as your server, get the ID of the device y
 ```
 > logitech-flow-kvm list-devices
 
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ ID             ┃ Product ┃ Name                       ┃ Serial   ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ /dev/hidraw4:1 │ B369    │ MX Keys Mini               │ 08F5F681 │
-│ /dev/hidraw5:1 │ 4082    │ MX Master 3 Wireless Mouse │ 0F591C09 │
-└────────────────┴─────────┴────────────────────────────┴──────────┘
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ ID       ┃ Product ┃ Name           ┃ Path           ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ 08F5F681 │ B369    │ MX Keys Mini   │ /dev/hidraw4:1 │
+│ F262458A │ 406A    │ MX Anywhere 2S │ /dev/hidraw5:1 │
+└──────────┴─────────┴────────────────┴────────────────┘
 ```
 
-In this example, I'll be using my keyboard (`/dev/hidraw4:1`) as my "leader", and my mouse (`/dev/hidraw5:1`) as a follower.
+In this example, I'll be using my keyboard (`08F5F681`) as my "leader", and my mouse (`F262458A`) as a follower. Note that we're using the device's ID (its serial number) here, not its path -- paths depend on enumeration order and USB topology, which can differ from machine to machine or even across reboots of the same machine, while the serial number is a stable, permanent identifier for the physical device.
 
 You can run a command like this:
 
 ```
-> logitech-flow-kvm flow-server 1 /dev/hidraw4:1 /dev/hidraw5:1
+> logitech-flow-kvm flow-server 1 08F5F681 F262458A
 ```
 
 Note that the `1` in the above command immediately after `flow-server` indicates that the host number of your server is `1`.  This should match the host number you've paired your mouse and keyboard with your device as (i.e. when your mouse or keyboard is connected to this computer, the light for `1` is lit on the keyboard or mouse's device selector).
@@ -88,23 +88,23 @@ You can get a list of available devices using the `list-devices` subcommand:
 > logitech-flow-kvm list-devices
 
 Finding devices... ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ ID             ┃ Product ┃ Name                       ┃ Serial   ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ /dev/hidraw4:1 │ B369    │ MX Keys Mini               │ 08F5F681 │
-│ /dev/hidraw5:1 │ 4082    │ MX Master 3 Wireless Mouse │ 0F591C09 │
-└────────────────┴─────────┴────────────────────────────┴──────────┘
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ ID       ┃ Product ┃ Name           ┃ Path           ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ 08F5F681 │ B369    │ MX Keys Mini   │ /dev/hidraw4:1 │
+│ F262458A │ 406A    │ MX Anywhere 2S │ /dev/hidraw5:1 │
+└──────────┴─────────┴────────────────┴────────────────┘
 ```
 
 ## Switching which host a device is connected to
 
-You can change the relevant device to your desired host number using the `switch-to-host` command:
+You can change the relevant device to your desired host number using the `switch-to-host` command, addressing the device by its path (not its ID -- `switch-to-host` and `watch` are one-shot commands run against whatever's currently enumerated, so the path is fine here):
 
 ```
 > logitech-flow-kvm switch-to-host /dev/hidraw4:1 2
 ```
 
-The above command will tell the device having the id `/dev/hidraw4:1` to connect to whichever device is paired as its #`2` device.
+The above command will tell the device at path `/dev/hidraw4:1` to connect to whichever device is paired as its #`2` device.
 
 ## Running a command when a device connects or disconnects
 
@@ -125,15 +125,15 @@ If you have two devices:
 ```
 > logitech-flow-kvm list-devices
 
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ ID             ┃ Product ┃ Name                       ┃ Serial   ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ /dev/hidraw4:1 │ B369    │ MX Keys Mini               │ 08F5F681 │
-│ /dev/hidraw5:1 │ 4082    │ MX Master 3 Wireless Mouse │ 0F591C09 │
-└────────────────┴─────────┴────────────────────────────┴──────────┘
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ ID       ┃ Product ┃ Name           ┃ Path           ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ 08F5F681 │ B369    │ MX Keys Mini   │ /dev/hidraw4:1 │
+│ F262458A │ 406A    │ MX Anywhere 2S │ /dev/hidraw5:1 │
+└──────────┴─────────┴────────────────┴────────────────┘
 ```
 
-You can respond run a command that will listen to when the "MX Keys Mini" device above disconnects, and when it does, ask the "MX Master 3 Wireless Mouse" to connect to a specific host:
+You can respond run a command that will listen to when the "MX Keys Mini" device above disconnects, and when it does, ask the "MX Anywhere 2S" to connect to a specific host:
 
 ```
 > logitech-flow-kvm watch --on-disconnect-execute="logitech-flow-kvm switch-to-host /dev/hidraw5:1 2" /dev/hidraw4:1

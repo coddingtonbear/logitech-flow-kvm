@@ -237,6 +237,10 @@ def get_certificate_key_path(name: str, create: bool = False) -> tuple[str, str]
                     ),
                     critical=False,
                 )
+                .add_extension(
+                    x509.BasicConstraints(ca=True, path_length=None),
+                    critical=True,
+                )
                 .sign(key, hashes.SHA512())
             )
 

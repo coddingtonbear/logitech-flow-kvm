@@ -123,6 +123,14 @@ class TestGetCertificateKeyPath:
         lifetime = certificate.not_valid_after_utc - certificate.not_valid_before_utc
         assert lifetime == datetime.timedelta(days=10 * 365)
 
+        # Without CA:TRUE, modern OpenSSL refuses to use this self-signed
+        # cert as a trust anchor (requests' verify=<path> does exactly that).
+        basic_constraints = certificate.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        )
+        assert basic_constraints.value.ca is True
+        assert basic_constraints.critical is True
+
     def test_reuses_existing_certificate(self, user_data_dir):
         first = util.get_certificate_key_path("server", create=True)
         with open(first[0], "rb") as inf:
