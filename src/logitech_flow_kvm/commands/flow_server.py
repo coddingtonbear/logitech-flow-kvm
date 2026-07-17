@@ -10,10 +10,6 @@ from flask import Flask
 from flask import abort
 from flask import request
 from flask_httpauth import HTTPTokenAuth
-from logitech_receiver import Device
-from logitech_receiver import Receiver
-from logitech_receiver.base import _HIDPP_Notification
-from logitech_receiver.listener import EventsListener
 from rich.console import Console
 from rich.progress import Progress
 from rich.prompt import Prompt
@@ -21,18 +17,16 @@ from rich.table import Table
 
 from .. import constants
 from .. import exceptions
+from ..hidpp import Notification
+from ..hidpp import NotificationListener
+from ..hidpp import PairedDevice
+from ..hidpp import Receiver
 from ..util import change_device_host
 from ..util import get_certificate_key_path
 from ..util import get_devices
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
-
-
-class Listener(EventsListener):
-    def has_started(self):
-        self.receiver.enable_connection_notifications()
-        self.receiver.notify_devices()
 
 
 class UnknownDevice(Exception):
@@ -42,11 +36,11 @@ class UnknownDevice(Exception):
 class FlowServerAPI(Flask):
     host_number: int
 
-    listeners: list[Listener]
-    leader_device: Device
-    follower_devices: list[Device]
+    listeners: list[NotificationListener]
+    leader_device: PairedDevice
+    follower_devices: list[PairedDevice]
 
-    device_status: dict[Receiver, dict[Device, int]] = {}
+    device_status: dict[Receiver, dict[PairedDevice, int]] = {}
 
     console: Console = Console()
 
@@ -56,31 +50,29 @@ class FlowServerAPI(Flask):
         self,
         *args,
         host_number: int,
-        leader_device: Device,
-        follower_devices: list[Device],
+        leader_device: PairedDevice,
+        follower_devices: list[PairedDevice],
         **kwargs,
     ):
         self.host_number = host_number
         self.leader_device = leader_device
         self.follower_devices = follower_devices
 
-        # Listen to change events for all relevant devices
-        self.listeners = [
-            Listener(
-                self.leader_device.receiver,
-                partial(self.callback, self.leader_device.receiver),
-            )
-        ]
-        for follower_device in self.follower_devices:
-            if follower_device.receiver not in [
-                listener.receiver for listener in self.listeners
-            ]:
-                self.listeners.append(
-                    Listener(
-                        follower_device.receiver,
-                        partial(self.callback, follower_device.receiver),
-                    )
+        # Listen to change events for all relevant devices, one listener per
+        # distinct receiver (leader and followers may share a receiver).
+        self.listeners = []
+        seen_receivers: list[Receiver] = []
+        for device in (self.leader_device, *self.follower_devices):
+            if device.receiver in seen_receivers:
+                continue
+            seen_receivers.append(device.receiver)
+            device.receiver.enable_connection_notifications()
+            device.receiver.notify_devices()
+            self.listeners.append(
+                NotificationListener(
+                    device.receiver.path, partial(self.callback, device.receiver)
                 )
+            )
 
         for listener in self.listeners:
             listener.start()
@@ -143,31 +135,33 @@ class FlowServerAPI(Flask):
 
         return False
 
-    def callback(self, receiver: Receiver, msg: _HIDPP_Notification) -> None:
-        if msg.sub_id == 0x41:
-            result = parse_connection_status(msg.data)
+    def callback(self, receiver: Receiver, notification: Notification) -> None:
+        if notification.sub_id != 0x41:
+            return
 
-            if receiver not in self.device_status:
-                self.device_status[receiver] = {}
+        device = next(
+            (
+                d
+                for d in (self.leader_device, *self.follower_devices)
+                if d.receiver is receiver and d.number == notification.devnumber
+            ),
+            None,
+        )
+        if device is None:
+            return
 
-            try:
-                device = receiver[msg.devnumber]
-            except IndexError:
-                return
+        result = parse_connection_status(notification.data)
 
-            if device.id not in [
-                self.leader_device.id,
-                *[follower_device.id for follower_device in self.follower_devices],
-            ]:
-                return
+        if receiver not in self.device_status:
+            self.device_status[receiver] = {}
 
-            if result["link_status"] == 0:
-                self.device_status[receiver][device] = self.host_number
-                self.console.print(
-                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
-                )
-            else:
-                self.console.print(f":x: [bold]Device {device.id} disconnected")
+        if result["link_status"] == 0:
+            self.device_status[receiver][device] = self.host_number
+            self.console.print(
+                f":white_heavy_check_mark: [bold]Device {device.id} connected"
+            )
+        else:
+            self.console.print(f":x: [bold]Device {device.id} disconnected")
 
     def remote_device_status_change(self, id: str, new_host: int) -> None:
         found_device = False
@@ -288,7 +282,7 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def handle(self) -> None:
-        device_id_map: dict[str, Device | None] = {
+        device_id_map: dict[str, PairedDevice | None] = {
             self.options.leader_device: None,
             **{follower: None for follower in self.options.follower_devices},
         }
@@ -306,7 +300,7 @@ class FlowServer(LogitechFlowKvmCommand):
                 if None not in device_id_map.values():
                     break
 
-        found_devices: dict[str, Device] = {}
+        found_devices: dict[str, PairedDevice] = {}
         for device_id, found_device in device_id_map.items():
             if found_device is None:
                 raise exceptions.DeviceNotFound(device_id)

@@ -28,7 +28,3 @@ class DeviceNotFound(UserError):
 
 class CannotChangeHost(UserError):
     pass
-
-
-class ChangeHostFailed(LogitechFlowKvmError):
-    pass

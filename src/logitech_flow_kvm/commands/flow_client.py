@@ -10,27 +10,22 @@ from typing import Literal
 import pyperclip
 import requests
 import urllib3
-from logitech_receiver import Device
-from logitech_receiver import Receiver
-from logitech_receiver.base import _HIDPP_Notification
-from logitech_receiver.base import receivers
-from logitech_receiver.listener import EventsListener
 from rich.console import Console
 from rich.table import Table
 from urllib3.exceptions import InsecureRequestWarning
 
 from .. import constants
 from .. import exceptions
+from ..hidpp import Notification
+from ..hidpp import NotificationListener
+from ..hidpp import PairedDevice
+from ..hidpp import Receiver
+from ..hidpp import find_receivers
 from ..util import change_device_host
 from ..util import get_host_certificate_path_and_token
 from ..util import parse_connection_status
 from ..util import set_host_certificate_and_token
 from . import LogitechFlowKvmCommand
-
-
-class Listener(EventsListener):
-    def has_started(self):
-        self.receiver.enable_connection_notifications()
 
 
 class FlowClient(LogitechFlowKvmCommand):
@@ -39,7 +34,7 @@ class FlowClient(LogitechFlowKvmCommand):
     cert: str | None = None
     token: str | None = None
 
-    device_status: dict[Receiver, dict[Device, int]] = {}
+    device_status: dict[Receiver, dict[PairedDevice, int]] = {}
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
@@ -48,16 +43,15 @@ class FlowClient(LogitechFlowKvmCommand):
         parser.add_argument("--sleep-time", "-s", default=0.25, type=float)
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
-    def callback(self, receiver: Receiver, msg: _HIDPP_Notification) -> None:
-        if msg.sub_id == 0x41:
-            result = parse_connection_status(msg.data)
+    def callback(self, receiver: Receiver, notification: Notification) -> None:
+        if notification.sub_id == 0x41:
+            result = parse_connection_status(notification.data)
 
             if receiver not in self.device_status:
                 self.device_status[receiver] = {}
 
-            try:
-                device = receiver[msg.devnumber]
-            except IndexError:
+            device = receiver.get_device(notification.devnumber)
+            if device is None:
                 return
 
             if result["link_status"] == 0:
@@ -194,10 +188,13 @@ class FlowClient(LogitechFlowKvmCommand):
         self.leader_id = response["leader"]
         self.follower_ids = response["followers"]
 
-        for receiver_info in receivers():
-            receiver = Receiver.open(receiver_info)
+        for info in find_receivers():
+            receiver = Receiver(info)
+            receiver.enable_connection_notifications()
 
-            listener = Listener(receiver, partial(self.callback, receiver))
+            listener = NotificationListener(
+                receiver.path, partial(self.callback, receiver)
+            )
             listener.start()
 
         table = Table()

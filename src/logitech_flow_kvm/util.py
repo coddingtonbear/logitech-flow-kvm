@@ -6,9 +6,7 @@ import re
 import socket
 from collections.abc import Iterable
 from json.decoder import JSONDecodeError
-from typing import Any
 from typing import TypedDict
-from typing import cast
 
 import platformdirs
 import psutil
@@ -18,19 +16,14 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
-from hidapi.udev import DeviceInfo
-from logitech_receiver import Device
-from logitech_receiver import NoSuchDevice
-from logitech_receiver import Receiver
-from logitech_receiver.base import receivers
-from logitech_receiver.settings_templates import check_feature_setting
-from solaar.cli.config import select_choice
 
 from . import constants
 from .exceptions import CannotChangeHost
-from .exceptions import ChangeHostFailed
 from .exceptions import DeviceNotFound
 from .exceptions import NoCertificateAvailable
+from .hidpp import PairedDevice
+from .hidpp import Receiver
+from .hidpp import find_receivers
 
 
 class DeviceStatus(TypedDict):
@@ -76,47 +69,44 @@ class DeviceStatus(TypedDict):
 def get_theoretical_max_device_count() -> int:
     max_count = 0
 
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        receiver = Receiver.open(device_info)
-        max_count += receiver.max_devices
+    # Receivers are opened transiently here just to read max_devices; the
+    # file descriptors are not reused by get_devices(), which opens its own.
+    for info in find_receivers():
+        with Receiver(info) as receiver:
+            max_count += receiver.max_devices
 
     return max_count
 
 
-def get_devices() -> Iterable[Device | None]:
-    max_devices = 32
-    for idx in range(max_devices):
-        for device_info in cast(Iterable[DeviceInfo], receivers()):
-            receiver = Receiver.open(device_info)
-            if idx >= receiver.max_devices:
-                continue
-
-            try:
-                yield Device(receiver, idx + 1)
-            except NoSuchDevice:
-                yield None
+def get_devices() -> Iterable[PairedDevice | None]:
+    # Receivers opened here are intentionally left open for the lifetime of
+    # the process: callers (e.g. flow_server's leader/follower devices) keep
+    # using `device.receiver` afterward to enable notifications and switch hosts.
+    for info in find_receivers():
+        receiver = Receiver(info)
+        for number in range(1, receiver.max_devices + 1):
+            yield receiver.get_device(number)
 
 
-def get_device_path(device: Device) -> str:
-    if device.receiver:
-        return f"{device.receiver.path}:{device.number}"
-    return device.path
+def get_device_by_path(device_path: str) -> PairedDevice:
+    if ":" not in device_path:
+        raise DeviceNotFound(device_path)
 
+    receiver_path, _, number_text = device_path.rpartition(":")
+    try:
+        number = int(number_text)
+    except ValueError:
+        raise DeviceNotFound(device_path) from None
 
-def get_device_by_path(device_path: str) -> Device:
-    for device_info in cast(Iterable[DeviceInfo], receivers()):
-        if ":" in device_path:
-            receiver_id, device_idx = device_path.split(":")
-
-            if receiver_id == device_info.path:
-                receiver = Receiver.open(device_info)
-                device = receiver[int(device_idx)]
-                if not device:
-                    break
-                return device
-        else:
-            if device_path == device_info.path:
-                return Device.open(device_info)
+    for info in find_receivers():
+        if info.path != receiver_path:
+            continue
+        receiver = Receiver(info)
+        device = receiver.get_device(number)
+        if device is None:
+            receiver.close()
+            raise DeviceNotFound(device_path)
+        return device
 
     raise DeviceNotFound(device_path)
 
@@ -133,27 +123,13 @@ def parse_connection_status(data: bytes) -> DeviceStatus:
     return unpack_dict(">u1u1u1u1u4r16", names, data)
 
 
-def get_device_host_setting(device: Device) -> Any:
-    setting = check_feature_setting(device, "change-host")
-    if setting:
-        return setting
+def change_device_host(device: PairedDevice, host: int) -> None:
+    """Switch `device` to `host`. `host` is 1-indexed, matching the CLI and README."""
+    info = device.receiver.get_change_host_info(device.number)
+    if info is None or not 1 <= host <= info.num_hosts:
+        raise CannotChangeHost(device.id)
 
-    if device.descriptor and device.descriptor.settings:
-        for setting_class in device.descriptor.settings:
-            if setting_class.register and setting_class.name == "change-host":
-                return setting_class.build(device)
-
-
-def change_device_host(device: Device, host: int) -> None:
-    setting = get_device_host_setting(device)
-    if not setting:
-        raise CannotChangeHost(device)
-
-    target_value = select_choice(str(host), setting.choices, setting, None)
-    result = setting.write(target_value, save=False)
-
-    if not result or result != target_value:
-        raise ChangeHostFailed()
+    device.receiver.set_current_host(device.number, info.feature_index, host - 1)
 
 
 def get_valid_filename(s: str) -> str:

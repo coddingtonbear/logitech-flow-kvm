@@ -2,7 +2,6 @@ from rich.console import Console
 from rich.progress import Progress
 from rich.table import Table
 
-from ..util import get_device_path
 from ..util import get_devices
 from ..util import get_theoretical_max_device_count
 from . import LogitechFlowKvmCommand
@@ -26,10 +25,10 @@ class ListDevices(LogitechFlowKvmCommand):
                 progress.advance(enumerate_task)
                 if possible_device is not None:
                     table.add_row(
-                        possible_device.serial,
-                        possible_device.wpid or possible_device.product_id,
-                        possible_device.name or possible_device.codename or "",
-                        get_device_path(possible_device),
+                        possible_device.serial or "",
+                        possible_device.wpid,
+                        possible_device.codename or "",
+                        possible_device.path,
                     )
 
         console = Console()

@@ -1,23 +1,18 @@
 import subprocess
 from argparse import ArgumentParser
 
-from logitech_receiver import Device
-from logitech_receiver.base import _HIDPP_Notification
-from logitech_receiver.listener import EventsListener
 from rich.console import Console
 
+from ..hidpp import Notification
+from ..hidpp import NotificationListener
+from ..hidpp import PairedDevice
 from ..util import get_device_by_path
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
 
-class Listener(EventsListener):
-    def has_started(self):
-        self.receiver.enable_connection_notifications()
-
-
 class Watch(LogitechFlowKvmCommand):
-    device: Device | None
+    device: PairedDevice | None
     console: Console = Console()
 
     @classmethod
@@ -35,16 +30,16 @@ class Watch(LogitechFlowKvmCommand):
                 )
                 self.console.print(f"[cyan]Executed '{cmd}'; status {status}.")
 
-    def callback(self, msg: _HIDPP_Notification) -> None:
+    def callback(self, notification: Notification) -> None:
         if not self.device:
             return
 
-        if msg.devnumber != self.device.number:
+        if notification.devnumber != self.device.number:
             # This message is for a different device
             return
 
-        if msg.sub_id == 0x41:
-            result = parse_connection_status(msg.data)
+        if notification.sub_id == 0x41:
+            result = parse_connection_status(notification.data)
 
             self.console.print("")
             if result["link_status"] == 0:
@@ -64,9 +59,10 @@ class Watch(LogitechFlowKvmCommand):
         )
         self.console.print("[bold]Press CTRL+C to exit")
 
-        listener = Listener(device.receiver, self.callback)
+        device.receiver.enable_connection_notifications()
+        listener = NotificationListener(device.receiver.path, self.callback)
         listener.start()
         try:
             listener.join()
         except KeyboardInterrupt:
-            pass
+            listener.stop()

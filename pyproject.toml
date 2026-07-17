@@ -27,10 +27,6 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    # solaar >= 1.1.10 grew hard dependencies on dbus-python and PyGObject
-    # (for its GUI), which require system-level headers to build and make it
-    # unusable as a plain library dependency.
-    "solaar>=1.1.8,<1.1.10",
     "bitstruct>=8.15.1,<10",
     "safdie>=2.0.1,<3.0",
     "flask>=3.0,<4.0",
