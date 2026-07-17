@@ -340,7 +340,55 @@ class TestEventsRoute:
         next(response.response)
         response.response.close()
 
-        assert len(app.events._subscribers) == 0
+
+class TestConnectedGuests:
+    # Every test here sets the leader host before opening /events, exactly
+    # like TestEventsRoute above -- with no state set yet, the stream's
+    # first chunk blocks on the 15s keepalive wait, and Flask's test client
+    # drives at least one chunk of the generator during `client.get()`
+    # itself (not just on an explicit `next()`), so skipping this makes
+    # every test in this class slow instead of just wrong.
+
+    def test_subscribing_adds_the_authenticated_host_to_the_roster(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+
+        response = client.get("/events", headers=_auth_headers(app, "2"))
+
+        assert app.events.subscriber_names == ["2"]
+        response.response.close()
+
+    def test_unsubscribing_removes_the_host_from_the_roster(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+        response = client.get("/events", headers=_auth_headers(app, "2"))
+        next(response.response)  # advance past the initial snapshot
+
+        response.response.close()
+
+        assert app.events.subscriber_names == []
+
+    def test_subscribing_and_unsubscribing_publish_status(self, app):
+        app.report_leader_host(2)
+        app.tui = Mock()
+        client = app.test_client()
+
+        response = client.get("/events", headers=_auth_headers(app, "2"))
+        assert app.tui.update_status.call_count == 1
+        next(response.response)  # advance past the initial snapshot
+
+        response.response.close()
+
+        assert app.tui.update_status.call_count == 2
+
+    def test_build_status_reflects_connected_guests(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+
+        response = client.get("/events", headers=_auth_headers(app, "2"))
+
+        assert app._build_status().connected_guests == ["2"]
+        response.response.close()
 
 
 class TestPairingRoute:

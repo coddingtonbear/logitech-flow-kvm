@@ -167,6 +167,7 @@ class FlowServerAPI(Flask):
                 for device in self.follower_devices
             ],
             desired_host=self._get_desired_host(),
+            connected_guests=self.events.subscriber_names,
         )
 
     def _publish_status(self) -> None:
@@ -329,12 +330,13 @@ def bind_routes(app: FlowServerAPI) -> None:
     @app.route("/events")
     @auth.login_required
     def events():
-        connecting_host = auth.current_user()
-        subscriber_queue, current = app.events.subscribe()
+        connecting_host = str(auth.current_user())
+        subscriber_queue, current = app.events.subscribe(name=connecting_host)
         logger.info("Host %s connected", connecting_host)
         app.events.broadcast(
-            "host-connected", str(connecting_host), exclude=subscriber_queue
+            "host-connected", connecting_host, exclude=subscriber_queue
         )
+        app._publish_status()
 
         def stream():
             try:
@@ -347,6 +349,7 @@ def bind_routes(app: FlowServerAPI) -> None:
                         yield ": keepalive\n\n"
             finally:
                 app.events.unsubscribe(subscriber_queue)
+                app._publish_status()
 
         return Response(stream(), mimetype="text/event-stream")
 

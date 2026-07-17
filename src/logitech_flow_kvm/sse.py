@@ -58,13 +58,28 @@ class EventBroadcaster:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._subscribers: list[queue.Queue[str]] = []
+        # Which host each subscriber connected as, when known -- not every
+        # queue.Queue[str] key is guaranteed a name (subscribe()'s `name` is
+        # optional), so this is a lookup, not a parallel list.
+        self._subscriber_names: dict[queue.Queue[str], str] = {}
         self._state: str | None = None
 
     @property
     def state(self) -> str | None:
         return self._state
 
-    def subscribe(self) -> tuple[queue.Queue[str], str | None]:
+    @property
+    def subscriber_names(self) -> list[str]:
+        """Names of all currently-connected, named subscribers, in connection
+        order."""
+        with self._lock:
+            return [
+                self._subscriber_names[q]
+                for q in self._subscribers
+                if q in self._subscriber_names
+            ]
+
+    def subscribe(self, name: str | None = None) -> tuple[queue.Queue[str], str | None]:
         """Register a new subscriber and atomically read the current state.
 
         Registering before reading is what makes this atomic: a concurrent
@@ -76,6 +91,8 @@ class EventBroadcaster:
         q: queue.Queue[str] = queue.Queue()
         with self._lock:
             self._subscribers.append(q)
+            if name is not None:
+                self._subscriber_names[q] = name
             current = self._state
         return q, current
 
@@ -83,6 +100,7 @@ class EventBroadcaster:
         with self._lock:
             if q in self._subscribers:
                 self._subscribers.remove(q)
+            self._subscriber_names.pop(q, None)
 
     def set_state(self, event: str, data: str) -> None:
         with self._lock:

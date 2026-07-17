@@ -133,3 +133,40 @@ class TestEventBroadcaster:
 
         broadcaster.unsubscribe(q)
         broadcaster.unsubscribe(q)  # should not raise
+
+
+class TestSubscriberNames:
+    def test_starts_empty(self):
+        broadcaster = EventBroadcaster()
+
+        assert broadcaster.subscriber_names == []
+
+    def test_includes_named_subscribers_in_connection_order(self):
+        broadcaster = EventBroadcaster()
+
+        broadcaster.subscribe(name="2")
+        broadcaster.subscribe(name="3")
+
+        assert broadcaster.subscriber_names == ["2", "3"]
+
+    def test_excludes_unnamed_subscribers(self):
+        broadcaster = EventBroadcaster()
+
+        broadcaster.subscribe()
+        broadcaster.subscribe(name="2")
+
+        assert broadcaster.subscriber_names == ["2"]
+
+    def test_unsubscribe_removes_the_name(self):
+        broadcaster = EventBroadcaster()
+        q, _ = broadcaster.subscribe(name="2")
+
+        broadcaster.unsubscribe(q)
+
+        assert broadcaster.subscriber_names == []
+
+    def test_unsubscribe_of_an_unnamed_queue_does_not_raise(self):
+        broadcaster = EventBroadcaster()
+        q, _ = broadcaster.subscribe()
+
+        broadcaster.unsubscribe(q)  # should not raise
