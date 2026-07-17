@@ -1,0 +1,15 @@
+Screen {
+    layout: vertical;
+}
+
+StatusPanel {
+    height: auto;
+    max-height: 40%;
+    border: solid $accent;
+    padding: 0 1;
+}
+
+RichLog {
+    height: 1fr;
+    border: solid $panel;
+}

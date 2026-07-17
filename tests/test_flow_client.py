@@ -507,3 +507,107 @@ class TestConsumeEvents:
         client._consume_events()
 
         request_mock.assert_not_called()
+
+    def test_connected_to_server_is_true_only_while_the_stream_is_up(self, monkeypatch):
+        client = make_client(reconciler=Mock())
+        client._stop = threading.Event()
+        client.local_receivers = []
+        observed: list[bool] = []
+        monkeypatch.setattr(
+            client,
+            "_publish_status",
+            lambda: observed.append(client._connected_to_server),
+        )
+        stream = FakeResponse(ok=True, lines=[])
+        monkeypatch.setattr(client, "request", Mock(return_value=stream))
+        monkeypatch.setattr(flow_client.time, "sleep", lambda s: client._stop.set())
+
+        client._consume_events()
+
+        assert observed == [True, False]
+
+
+class TestBuildStatus:
+    def test_reflects_leader_host_and_follower_connection_state(self):
+        # A hashable stand-in -- `_connected` is keyed by device, and
+        # `SimpleNamespace` (unlike `Mock`) isn't hashable.
+        follower = Mock(id="FOLLOW01", codename="Mouse", kind="mouse")
+        reconciler = Mock()
+        reconciler._connected = {follower: True}
+        client = make_client(
+            reconciler=reconciler,
+            leader_host=3,
+            follower_devices=[follower],
+            _connected_to_server=True,
+        )
+
+        status = client._build_status()
+
+        assert status.host_number == 2
+        assert status.server == "myserver"
+        assert status.connected_to_server is True
+        assert status.leader_host == 3
+        assert len(status.followers) == 1
+        assert status.followers[0].id == "FOLLOW01"
+        assert status.followers[0].connected is True
+
+    def test_defaults_follower_connection_to_false_when_unobserved(self):
+        follower = Mock(id="FOLLOW01", codename=None, kind="mouse")
+        reconciler = Mock()
+        reconciler._connected = {}
+        client = make_client(reconciler=reconciler, follower_devices=[follower])
+
+        status = client._build_status()
+
+        assert status.followers[0].connected is False
+
+
+class TestPublishStatus:
+    def test_does_nothing_without_a_tui(self):
+        client = make_client(reconciler=Mock(), follower_devices=[])
+
+        # Would raise if it tried to build/render a status without a tui.
+        client._publish_status()
+
+    def test_updates_the_tui_when_present(self):
+        tui = Mock()
+        client = make_client(reconciler=Mock(), follower_devices=[], tui=tui)
+
+        client._publish_status()
+
+        tui.update_status.assert_called_once()
+
+
+class TestStartBackgroundThreads:
+    def test_starts_the_reconciler_listeners_and_events_consumer(self, monkeypatch):
+        reconciler = Mock()
+        client = make_client(reconciler=reconciler, local_receivers=[])
+        thread_targets: list[object] = []
+
+        class FakeThread:
+            def __init__(self, target=None, daemon=None):
+                thread_targets.append(target)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr(flow_client.threading, "Thread", FakeThread)
+
+        client.start_background_threads()
+
+        reconciler.start.assert_called_once()
+        assert thread_targets == [client._consume_events]
+
+    def test_starts_a_listener_for_each_local_receiver(self, monkeypatch):
+        receiver = Mock()
+        client = make_client(reconciler=Mock(), local_receivers=[receiver])
+        listener_mock = Mock()
+        monkeypatch.setattr(
+            flow_client, "NotificationListener", Mock(return_value=listener_mock)
+        )
+        monkeypatch.setattr(flow_client.threading, "Thread", Mock())
+
+        client.start_background_threads()
+
+        receiver.enable_connection_notifications.assert_called_once()
+        listener_mock.start.assert_called_once()

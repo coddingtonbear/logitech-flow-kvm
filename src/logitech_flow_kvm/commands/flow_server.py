@@ -2,6 +2,7 @@ import logging
 import os
 import queue
 import sqlite3
+import sys
 import threading
 import uuid
 from argparse import ArgumentParser
@@ -26,6 +27,10 @@ from ..hidpp import Receiver
 from ..reconciler import Reconciler
 from ..sse import EventBroadcaster
 from ..sse import format_sse
+from ..tui import DeviceStatus
+from ..tui import FlowTUIApp
+from ..tui import ServerStatus
+from ..tui import render_server_status
 from ..util import get_certificate_key_path
 from ..util import get_devices
 from ..util import get_theoretical_max_device_count
@@ -43,6 +48,8 @@ KEEPALIVE_INTERVAL = 15.0
 
 class FlowServerAPI(Flask):
     host_number: int
+    binding_interface: str
+    port: int
 
     listeners: list[NotificationListener]
     leader_device: PairedDevice
@@ -65,6 +72,10 @@ class FlowServerAPI(Flask):
     # to queue up one at a time instead.
     pairing_lock: threading.Lock
 
+    # Set once (if ever) a Textual UI is running -- `None` when running
+    # non-interactively, in which case status updates are simply skipped.
+    tui: FlowTUIApp | None = None
+
     def __init__(
         self,
         *args,
@@ -72,12 +83,18 @@ class FlowServerAPI(Flask):
         leader_device: PairedDevice,
         follower_devices: list[PairedDevice],
         hostnames: list[str],
+        binding_interface: str,
+        port: int,
         **kwargs,
     ):
         self.host_number = host_number
         self.leader_device = leader_device
         self.follower_devices = follower_devices
         self.hostnames = hostnames
+        self.binding_interface = binding_interface
+        self.port = port
+
+        self._leader_connected = False
 
         self.pairing_lock = threading.Lock()
 
@@ -105,10 +122,6 @@ class FlowServerAPI(Flask):
                 )
             )
 
-        for listener in self.listeners:
-            listener.start()
-        self.reconciler.start()
-
         user_data_dir = platformdirs.user_data_dir(
             constants.APP_NAME, constants.APP_AUTHOR
         )
@@ -121,9 +134,44 @@ class FlowServerAPI(Flask):
 
         super().__init__(*args, **kwargs)
 
+    def start_background_threads(self) -> None:
+        """Start the reconciler and notification listeners.
+
+        Deliberately not done in `__init__`: `callback()`/`report_leader_host()`
+        may call `self.tui.update_status(...)`, which requires the TUI's event
+        loop to already be running -- so when interactive, this is called from
+        `FlowTUIApp.on_mount` instead of right after construction.
+        """
+        for listener in self.listeners:
+            listener.start()
+        self.reconciler.start()
+
     def _get_desired_host(self) -> int | None:
         state = self.events.state
         return int(state) if state is not None else None
+
+    def _build_status(self) -> ServerStatus:
+        def device_status(device: PairedDevice, connected: bool) -> DeviceStatus:
+            return DeviceStatus(
+                id=device.id, label=device.codename or device.kind, connected=connected
+            )
+
+        return ServerStatus(
+            host_number=self.host_number,
+            binding_interface=self.binding_interface,
+            port=self.port,
+            hostnames=self.hostnames,
+            leader=device_status(self.leader_device, self._leader_connected),
+            followers=[
+                device_status(device, self.reconciler._connected.get(device, False))
+                for device in self.follower_devices
+            ],
+            desired_host=self._get_desired_host(),
+        )
+
+    def _publish_status(self) -> None:
+        if self.tui is not None:
+            self.tui.update_status(render_server_status(self._build_status()))
 
     def migrate_db(self) -> None:
         cursor = self.db.cursor()
@@ -190,22 +238,26 @@ class FlowServerAPI(Flask):
         connected = result["link_status"] == 0
 
         if device is self.leader_device:
+            self._leader_connected = connected
             if connected:
                 logger.info("Device %s connected", device.id)
                 self.report_leader_host(self.host_number)
             else:
                 logger.info("Device %s disconnected", device.id)
+                self._publish_status()
         else:
             self.reconciler.observe(device, connected)
             if connected:
                 logger.info("Device %s connected", device.id)
             else:
                 logger.info("Device %s disconnected", device.id)
+            self._publish_status()
 
     def report_leader_host(self, new_host: int) -> None:
         """Record positive evidence that the leader is now on `new_host`."""
         self.events.set_state("leader-host", str(new_host))
         self.reconciler.poke()
+        self._publish_status()
 
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
         logger.warning(
@@ -378,24 +430,41 @@ class FlowServer(LogitechFlowKvmCommand):
         if self.options.hostname:
             logger.info("Hostnames: %s", ", ".join(self.options.hostname))
 
-        logger.info("Press CTRL+C to exit")
-
         app = FlowServerAPI(
             __name__,
             host_number=self.options.host_number,
             leader_device=leader_device,
             follower_devices=follower_devices,
             hostnames=self.options.hostname,
+            binding_interface=self.options.binding_interface,
+            port=self.options.port,
         )
 
         bind_routes(app)
 
-        try:
+        def run_flask() -> None:
             app.run(
                 port=self.options.port,
                 host=self.options.binding_interface,
                 ssl_context=(cert_path, key_path),
                 threaded=True,
             )
-        except KeyboardInterrupt:
-            pass
+
+        if sys.stdout.isatty():
+
+            def on_start(tui: FlowTUIApp) -> None:
+                app.tui = tui
+                app.start_background_threads()
+                threading.Thread(target=run_flask, daemon=True).start()
+
+            # Textual owns the main thread's event loop from here; Ctrl+C
+            # is handled internally as a quit keybinding, not a raised
+            # KeyboardInterrupt.
+            FlowTUIApp("flow-server", on_start=on_start).run()
+        else:
+            logger.info("Press CTRL+C to exit")
+            app.start_background_threads()
+            try:
+                run_flask()
+            except KeyboardInterrupt:
+                pass

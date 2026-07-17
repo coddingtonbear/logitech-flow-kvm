@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import string
+import sys
 import threading
 import time
 from argparse import ArgumentParser
@@ -24,6 +25,10 @@ from ..hidpp import Receiver
 from ..hidpp import find_receivers
 from ..reconciler import Reconciler
 from ..sse import parse_sse_stream
+from ..tui import ClientStatus
+from ..tui import DeviceStatus
+from ..tui import FlowTUIApp
+from ..tui import render_client_status
 from ..util import get_host_certificate_path_and_token
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
@@ -50,6 +55,11 @@ class FlowClient(LogitechFlowKvmCommand):
     # stream. `None` until the first event arrives (or the stream's initial,
     # atomic snapshot -- see `sse.EventBroadcaster.subscribe`).
     leader_host: int | None = None
+
+    # Set once (if ever) a Textual UI is running -- `None` when running
+    # non-interactively, in which case status updates are simply skipped.
+    tui: FlowTUIApp | None = None
+    _connected_to_server: bool = False
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
@@ -105,6 +115,8 @@ class FlowClient(LogitechFlowKvmCommand):
                     len(clipboard_data),
                 )
 
+        self._publish_status()
+
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
         logger.warning(
             "Could not switch %s to the desired host yet (%s); will retry",
@@ -116,8 +128,29 @@ class FlowClient(LogitechFlowKvmCommand):
         if event_type == "leader-host":
             self.leader_host = int(data)
             self.reconciler.poke()
+            self._publish_status()
         elif event_type == "host-connected":
             logger.info("Host %s connected", data)
+
+    def _build_status(self) -> ClientStatus:
+        return ClientStatus(
+            host_number=self.options.host_number,
+            server=self.options.server,
+            connected_to_server=self._connected_to_server,
+            leader_host=self.leader_host,
+            followers=[
+                DeviceStatus(
+                    id=device.id,
+                    label=device.codename or device.kind,
+                    connected=self.reconciler._connected.get(device, False),
+                )
+                for device in self.follower_devices
+            ],
+        )
+
+    def _publish_status(self) -> None:
+        if self.tui is not None:
+            self.tui.update_status(render_client_status(self._build_status()))
 
     def _consume_events(self) -> None:
         backoff = EVENTS_MIN_BACKOFF
@@ -134,12 +167,17 @@ class FlowClient(LogitechFlowKvmCommand):
                 for receiver in self.local_receivers:
                     receiver.notify_devices()
                 backoff = EVENTS_MIN_BACKOFF
+                self._connected_to_server = True
+                self._publish_status()
                 for event_type, data in parse_sse_stream(
                     response.iter_lines(decode_unicode=True)
                 ):
                     self._handle_event(event_type, data)
             except requests.exceptions.RequestException:
                 pass
+            if self._connected_to_server:
+                self._connected_to_server = False
+                self._publish_status()
             if self._stop.is_set():
                 return
             time.sleep(backoff)
@@ -258,6 +296,45 @@ class FlowClient(LogitechFlowKvmCommand):
             host_number=self.options.host_number,
             on_error=self._reconciler_error,
         )
+
+        self._stop = threading.Event()
+
+        logger.info("Server URL: %s", self.build_url())
+        logger.info("Certificate: %s", self.cert)
+        logger.info("Leader serial: %s", self.leader_id)
+        logger.info("Follower serials: %s", ", ".join(self.follower_ids))
+
+        if sys.stdout.isatty():
+
+            def on_start(tui: FlowTUIApp) -> None:
+                self.tui = tui
+                self.start_background_threads()
+
+            # Textual owns the main thread's event loop from here; Ctrl+C
+            # is handled internally as a quit keybinding, not a raised
+            # KeyboardInterrupt.
+            FlowTUIApp("flow-client", on_start=on_start).run()
+            self._stop.set()
+            self.reconciler.stop()
+        else:
+            self.start_background_threads()
+            try:
+                while True:
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                self._stop.set()
+                self.reconciler.stop()
+
+    def start_background_threads(self) -> None:
+        """Start the reconciler, notification listeners, and the /events
+        consumer.
+
+        Deliberately not done inline in `handle()`: `callback()`/
+        `_handle_event()`/`_consume_events()` may call
+        `self.tui.update_status(...)`, which requires the TUI's event loop
+        to already be running -- so when interactive, this is called from
+        `FlowTUIApp.on_mount` instead.
+        """
         self.reconciler.start()
 
         for receiver in self.local_receivers:
@@ -267,18 +344,5 @@ class FlowClient(LogitechFlowKvmCommand):
             )
             listener.start()
 
-        self._stop = threading.Event()
         events_thread = threading.Thread(target=self._consume_events, daemon=True)
         events_thread.start()
-
-        logger.info("Server URL: %s", self.build_url())
-        logger.info("Certificate: %s", self.cert)
-        logger.info("Leader serial: %s", self.leader_id)
-        logger.info("Follower serials: %s", ", ".join(self.follower_ids))
-
-        try:
-            while True:
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            self._stop.set()
-            self.reconciler.stop()

@@ -1,5 +1,6 @@
 import threading
 import time
+from unittest.mock import Mock
 
 import platformdirs
 import pytest
@@ -108,6 +109,8 @@ def app(leader_device, follower_device):
         leader_device=leader_device,
         follower_devices=[follower_device],
         hostnames=[],
+        binding_interface="0.0.0.0",
+        port=24801,
     )
     bind_routes(api)
     api.config["TESTING"] = True
@@ -176,6 +179,78 @@ class TestCallback:
         app.callback(leader_device.receiver, other)
 
         assert app._get_desired_host() is None
+
+    def test_leader_connect_and_disconnect_publish_status(self, app, leader_device):
+        app.tui = Mock()
+
+        app.callback(leader_device.receiver, connect_notification(leader_device))
+        assert app.tui.update_status.call_count == 1
+
+        app.callback(leader_device.receiver, disconnect_notification(leader_device))
+        assert app.tui.update_status.call_count == 2
+
+    def test_follower_connect_and_disconnect_publish_status(self, app, follower_device):
+        app.tui = Mock()
+
+        app.callback(follower_device.receiver, connect_notification(follower_device))
+        assert app.tui.update_status.call_count == 1
+
+        app.callback(follower_device.receiver, disconnect_notification(follower_device))
+        assert app.tui.update_status.call_count == 2
+
+    def test_does_not_publish_status_without_a_tui(self, app, follower_device):
+        assert app.tui is None
+
+        # Would raise if it tried to call `update_status` on `None`.
+        app.callback(follower_device.receiver, connect_notification(follower_device))
+
+
+class TestBuildStatus:
+    def test_reflects_leader_and_follower_connection_state(
+        self, app, leader_device, follower_device
+    ):
+        app.callback(leader_device.receiver, connect_notification(leader_device))
+        app.callback(follower_device.receiver, connect_notification(follower_device))
+
+        status = app._build_status()
+
+        assert status.leader is not None
+        assert status.leader.id == leader_device.id
+        assert status.leader.connected is True
+        assert len(status.followers) == 1
+        assert status.followers[0].id == follower_device.id
+        assert status.followers[0].connected is True
+
+    def test_defaults_to_disconnected_before_any_notification(self, app, leader_device):
+        status = app._build_status()
+
+        assert status.leader is not None
+        assert status.leader.connected is False
+        assert status.followers[0].connected is False
+
+    def test_includes_static_configuration(self, app):
+        status = app._build_status()
+
+        assert status.host_number == app.host_number
+        assert status.binding_interface == app.binding_interface
+        assert status.port == app.port
+
+    def test_desired_host_reflects_reported_leader_host(self, app):
+        app.report_leader_host(3)
+
+        assert app._build_status().desired_host == 3
+
+
+class TestStartBackgroundThreads:
+    def test_starts_the_reconciler_and_every_listener(self, app):
+        app.reconciler.start = Mock()
+        app.listeners = [Mock(), Mock()]
+
+        app.start_background_threads()
+
+        app.reconciler.start.assert_called_once()
+        for listener in app.listeners:
+            listener.start.assert_called_once()
 
 
 def _auth_headers(app, name: str) -> dict[str, str]:
