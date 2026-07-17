@@ -39,6 +39,7 @@ class FlowServerAPI(Flask):
     listeners: list[NotificationListener]
     leader_device: PairedDevice
     follower_devices: list[PairedDevice]
+    hostnames: list[str]
 
     device_status: dict[Receiver, dict[PairedDevice, int]] = {}
 
@@ -52,11 +53,13 @@ class FlowServerAPI(Flask):
         host_number: int,
         leader_device: PairedDevice,
         follower_devices: list[PairedDevice],
+        hostnames: list[str],
         **kwargs,
     ):
         self.host_number = host_number
         self.leader_device = leader_device
         self.follower_devices = follower_devices
+        self.hostnames = hostnames
 
         # Listen to change events for all relevant devices, one listener per
         # distinct receiver (leader and followers may share a receiver).
@@ -203,7 +206,9 @@ def bind_routes(app: FlowServerAPI) -> None:
 
         if typed_pairing_code.strip().upper() == request_data["pairing_code"].upper():
             console.print("[magenta]Paired successfully")
-            cert_path, _ = get_certificate_key_path("server", create=True)
+            cert_path, _ = get_certificate_key_path(
+                "server", create=True, hostnames=app.hostnames
+            )
 
             response_data: dict = {
                 "token": app.create_new_auth_token(request_data["name"])
@@ -280,6 +285,19 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("follower_devices", nargs="+")
         parser.add_argument("--binding-interface", "-b", default="0.0.0.0", type=str)
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
+        parser.add_argument(
+            "--hostname",
+            "-H",
+            action="append",
+            default=[],
+            help=(
+                "Hostname clients will use to reach this server, in addition to its "
+                "IP addresses (which are always included automatically). May be "
+                "given more than once. Required if clients connect by hostname "
+                "rather than IP, since the certificate must list every name it's "
+                "presented as."
+            ),
+        )
 
     def handle(self) -> None:
         device_id_map: dict[str, PairedDevice | None] = {
@@ -311,7 +329,9 @@ class FlowServer(LogitechFlowKvmCommand):
         for device in self.options.follower_devices:
             follower_devices.append(found_devices[device])
 
-        cert_path, key_path = get_certificate_key_path("server", create=True)
+        cert_path, key_path = get_certificate_key_path(
+            "server", create=True, hostnames=self.options.hostname
+        )
 
         console = Console()
 
@@ -328,6 +348,8 @@ class FlowServer(LogitechFlowKvmCommand):
         table.add_row("Key", key_path)
         table.add_row("Binding Interface", self.options.binding_interface)
         table.add_row("Port", str(self.options.port))
+        if self.options.hostname:
+            table.add_row("Hostnames", "\n".join(self.options.hostname))
 
         console.print(table)
 
@@ -338,6 +360,7 @@ class FlowServer(LogitechFlowKvmCommand):
             host_number=self.options.host_number,
             leader_device=leader_device,
             follower_devices=follower_devices,
+            hostnames=self.options.hostname,
         )
 
         bind_routes(app)

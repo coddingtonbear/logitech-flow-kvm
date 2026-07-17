@@ -193,68 +193,85 @@ def set_host_certificate_and_token(name: str, certificate: str, token: str) -> N
         json.dump({"token": token}, outf)
 
 
-def get_certificate_key_path(name: str, create: bool = False) -> tuple[str, str]:
+def _certificate_dns_names(cert_path: str) -> set[str]:
+    with open(cert_path, "rb") as f:
+        cert = x509.load_pem_x509_certificate(f.read())
+    try:
+        san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+    except x509.ExtensionNotFound:
+        return set()
+    return set(san.value.get_values_for_type(x509.DNSName))
+
+
+def _write_certificate(cert_path: str, key_path: str, hostnames: set[str]) -> None:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+
+    subject = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "WA"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Seattle"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "coddingtonbear"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "logitech-flow-kvm"),
+            x509.NameAttribute(NameOID.EMAIL_ADDRESS, "none@none.com"),
+        ]
+    )
+    subject_alt_names: list[x509.GeneralName] = [
+        x509.IPAddress(ipaddress.ip_address(addr)) for addr in get_all_ips()
+    ]
+    subject_alt_names += [x509.DNSName(hostname) for hostname in sorted(hostnames)]
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=10 * 365))
+        .add_extension(x509.SubjectAlternativeName(subject_alt_names), critical=False)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA512())
+    )
+
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(key_path, "wb") as f:
+        f.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+
+
+def get_certificate_key_path(
+    name: str, create: bool = False, hostnames: Iterable[str] = ()
+) -> tuple[str, str]:
     user_data_dir = platformdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
 
     os.makedirs(user_data_dir, exist_ok=True)
-    cert_path = os.path.join(
-        user_data_dir,
-        f"{name}.cert",
-    )
+    cert_path = os.path.join(user_data_dir, f"{name}.cert")
     key_path = os.path.join(user_data_dir, f"{name}.key")
-    if not (os.path.exists(cert_path) and os.path.exists(key_path)):
-        if create:
-            key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
 
-            subject = x509.Name(
-                [
-                    x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-                    x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "WA"),
-                    x509.NameAttribute(NameOID.LOCALITY_NAME, "Seattle"),
-                    x509.NameAttribute(NameOID.ORGANIZATION_NAME, "coddingtonbear"),
-                    x509.NameAttribute(
-                        NameOID.ORGANIZATIONAL_UNIT_NAME, "logitech-flow-kvm"
-                    ),
-                    x509.NameAttribute(NameOID.EMAIL_ADDRESS, "none@none.com"),
-                ]
-            )
+    hostnames = set(hostnames)
+    exists = os.path.exists(cert_path) and os.path.exists(key_path)
+    # Only hostnames (explicit, operator-provided) trigger regeneration --
+    # not IP addresses, which are auto-discovered and can change on their
+    # own (e.g. DHCP) without the operator asking for a new certificate.
+    stale = exists and _certificate_dns_names(cert_path) != hostnames
 
-            now = datetime.datetime.now(datetime.timezone.utc)
-            cert = (
-                x509.CertificateBuilder()
-                .subject_name(subject)
-                .issuer_name(subject)
-                .public_key(key.public_key())
-                .serial_number(x509.random_serial_number())
-                .not_valid_before(now)
-                .not_valid_after(now + datetime.timedelta(days=10 * 365))
-                .add_extension(
-                    x509.SubjectAlternativeName(
-                        [
-                            x509.IPAddress(ipaddress.ip_address(addr))
-                            for addr in get_all_ips()
-                        ]
-                    ),
-                    critical=False,
-                )
-                .add_extension(
-                    x509.BasicConstraints(ca=True, path_length=None),
-                    critical=True,
-                )
-                .sign(key, hashes.SHA512())
-            )
-
-            with open(cert_path, "wb") as f:
-                f.write(cert.public_bytes(serialization.Encoding.PEM))
-            with open(key_path, "wb") as f:
-                f.write(
-                    key.private_bytes(
-                        serialization.Encoding.PEM,
-                        serialization.PrivateFormat.TraditionalOpenSSL,
-                        serialization.NoEncryption(),
-                    )
-                )
-        else:
+    if not exists or stale:
+        if not create:
             raise NoCertificateAvailable()
+        if stale:
+            print(
+                "Certificate hostnames changed; regenerating the server certificate. "
+                "Any already-running flow-client instances must be restarted -- "
+                "they will not recover on their own -- and will need to re-pair."
+            )
+        _write_certificate(cert_path, key_path, hostnames)
 
     return (cert_path, key_path)

@@ -66,6 +66,14 @@ After running the above command, you'll receive some output indicating what host
 
 From the above lines, you'll want to select an IP address that can be reached from your clients.  In my case, I'll be using `10.224.224.120` for connections from the clients to the server.
 
+If you'd rather connect using a hostname (e.g. an mDNS `.local`/`.lan` name) instead of an IP address, pass it with `--hostname`/`-H` (repeatable) so it gets included in the server's certificate -- otherwise clients connecting by that hostname will fail TLS verification, since the certificate only lists the server's IP addresses by default:
+
+```
+> logitech-flow-kvm flow-server 1 08F5F681 F262458A --hostname coddingtonbear-t14.lan
+```
+
+Note that changing the set of hostnames on a later run regenerates the certificate, which invalidates every already-paired client's cached copy of it. A client that's freshly started will recover on its own (it re-pairs automatically the next time it sees a certificate it doesn't recognize), but a client that's already running when this happens will not -- restart it too.
+
 ## Client
 
 On the other computers you'd like to use this feature with, you can run the following command:

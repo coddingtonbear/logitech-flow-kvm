@@ -141,3 +141,70 @@ class TestGetCertificateKeyPath:
         assert first == second
         with open(second[0], "rb") as inf:
             assert inf.read() == first_contents
+
+    def test_certificate_includes_requested_hostnames(self, user_data_dir):
+        cert_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan", "bar.lan"]
+        )
+
+        with open(cert_path, "rb") as inf:
+            certificate = x509.load_pem_x509_certificate(inf.read())
+
+        san = certificate.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        )
+        assert set(san.value.get_values_for_type(x509.DNSName)) == {
+            "foo.lan",
+            "bar.lan",
+        }
+
+    def test_reuses_certificate_when_hostnames_unchanged(self, user_data_dir):
+        first_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan"]
+        )
+        with open(first_path, "rb") as inf:
+            first_contents = inf.read()
+
+        second_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan"]
+        )
+        with open(second_path, "rb") as inf:
+            assert inf.read() == first_contents
+
+    def test_regenerates_when_hostnames_change(self, user_data_dir):
+        first_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan"]
+        )
+        with open(first_path, "rb") as inf:
+            first_contents = inf.read()
+
+        second_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["bar.lan"]
+        )
+        with open(second_path, "rb") as inf:
+            second_contents = inf.read()
+
+        assert second_contents != first_contents
+
+        certificate = x509.load_pem_x509_certificate(second_contents)
+        san = certificate.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        )
+        assert set(san.value.get_values_for_type(x509.DNSName)) == {"bar.lan"}
+
+    def test_ip_address_changes_do_not_trigger_regeneration(
+        self, user_data_dir, monkeypatch
+    ):
+        monkeypatch.setattr(util, "get_all_ips", lambda: ["10.0.0.1"])
+        first_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan"]
+        )
+        with open(first_path, "rb") as inf:
+            first_contents = inf.read()
+
+        monkeypatch.setattr(util, "get_all_ips", lambda: ["10.0.0.2"])
+        second_path, _ = util.get_certificate_key_path(
+            "server", create=True, hostnames=["foo.lan"]
+        )
+        with open(second_path, "rb") as inf:
+            assert inf.read() == first_contents
