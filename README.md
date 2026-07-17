@@ -1,15 +1,32 @@
 ![header-image](http://coddingtonbear-public.s3.amazonaws.com/github/logitech-flow-kvm/mx_keys_buttons.jpg)
 
-Quickly switch between paired devices when using a Logitech mouse and keyboard that supports connecting to multiple devices.
+[![PyPI version](https://img.shields.io/pypi/v/logitech-flow-kvm.svg)](https://pypi.org/project/logitech-flow-kvm/)
+[![Python versions](https://img.shields.io/pypi/pyversions/logitech-flow-kvm.svg)](https://pypi.org/project/logitech-flow-kvm/)
+[![CI](https://github.com/coddingtonbear/logitech-flow-kvm/actions/workflows/ci.yml/badge.svg)](https://github.com/coddingtonbear/logitech-flow-kvm/actions/workflows/ci.yml)
+[![License](https://img.shields.io/pypi/l/logitech-flow-kvm.svg)](https://github.com/coddingtonbear/logitech-flow-kvm/blob/main/LICENSE)
 
-Do you use Logitech devices that support multiple hosts and find it a little frustrating how tedious it is to switch between hosts when you're using Linux due to Logitech's "Flow" features being unsupported there?  Good news: you can have "Flow"-like features on Linux now, too.
+Logitech's "Flow" lets your mouse and keyboard roam across multiple paired hosts with a single keypress -- but Logitech only supports it between Windows and macOS. `logitech-flow-kvm` brings that same one-keypress host switching to Linux, and keeps your clipboard in sync across hosts while it's at it.
 
-This utility works by monitoring one of your attached Logitech devices to see what host it is currently connected to, and then, if that host changes, instructing other connected devices to switch to the same host.
+It works by watching one of your attached Logitech devices (typically your keyboard) to see what host it's currently connected to, and, when that changes, instructing your other connected devices to switch to the same host -- and it does this over an encrypted, paired connection, so it works just as well across separate machines on your network as it does on a single desk.
+
+Its HID++ implementation builds on the protocol knowledge documented by the [Solaar](https://github.com/pwr-Solaar/Solaar) project, but where Solaar is a general device manager, this tool focuses specifically on Flow-style host switching.
+
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Basic Use](#basic-use)
+- [How to](#how-to)
+- [Logs](#logs)
+- [Credits](#credits)
 
 # Features
 
-- Automatically switches all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
+- Automatically switches all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
 - Securely keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
+- Encrypted, paired connections between server and clients -- a one-time pairing-code handshake secures the link, so switching hosts across machines on your network is as safe as doing it on one desk.
+- A live TUI status display when run in a terminal (device/leader status, connection state, scrolling log), with a clean, plain-log fallback when run non-interactively -- e.g. under systemd.
+- A rotating log file kept on disk regardless of how it's run, so you can always see what happened after the fact.
 
 # Installation
 
@@ -58,7 +75,7 @@ When run in a terminal, `flow-server` shows an interactive display: a status pan
 
 ![flow-server](http://coddingtonbear-public.s3.amazonaws.com/github/logitech-flow-kvm/flow-server.png)
 
-> [!info]
+> [!TIP]
 > If you'd rather connect using a hostname (e.g. an mDNS `.local`/`.lan` name) instead of an IP address, pass it with `--hostname`/`-H` (repeatable) so it gets included in the server's certificate -- otherwise clients connecting by that hostname will fail TLS verification, since the certificate only lists the server's IP addresses by default:
 > ```
 > logitech-flow-kvm flow-server --hostname coddingtonbear-t14.lan 1 08F5F681 F262458A
