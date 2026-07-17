@@ -1,6 +1,7 @@
 import os
 import queue
 import sqlite3
+import threading
 import uuid
 from argparse import ArgumentParser
 from functools import partial
@@ -59,6 +60,12 @@ class FlowServerAPI(Flask):
 
     db: sqlite3.Connection
 
+    # `threaded=True` means concurrent /pairing requests would otherwise run
+    # their Prompt.ask() calls on the same console at once, interleaving
+    # prompts and input across unrelated pairing attempts. This forces them
+    # to queue up one at a time instead.
+    pairing_lock: threading.Lock
+
     def __init__(
         self,
         *args,
@@ -72,6 +79,8 @@ class FlowServerAPI(Flask):
         self.leader_device = leader_device
         self.follower_devices = follower_devices
         self.hostnames = hostnames
+
+        self.pairing_lock = threading.Lock()
 
         self.events = EventBroadcaster()
         self.reconciler = Reconciler(
@@ -219,34 +228,41 @@ def bind_routes(app: FlowServerAPI) -> None:
 
     @app.route("/pairing", methods=["POST"])
     def pair():
-        console = Console()
+        # Serialized: two pairing attempts running at once would interleave
+        # their Prompt.ask() calls on this one shared console.
+        with app.pairing_lock:
+            console = Console()
 
-        console.print(
-            f"[magenta]Received pairing request from {request.remote_addr}; "
-            "a pairing code has been printed to the console running `flow-client` "
-            "enter that code below to complete the pairing process."
-        )
-        typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
-
-        request_data = request.json
-
-        if typed_pairing_code.strip().upper() == request_data["pairing_code"].upper():
-            console.print("[magenta]Paired successfully")
-            cert_path, _ = get_certificate_key_path(
-                "server", create=True, hostnames=app.hostnames
+            console.print(
+                f"[magenta]Received pairing request from {request.remote_addr}; "
+                "a pairing code has been printed to the console running "
+                "`flow-client` enter that code below to complete the pairing "
+                "process."
             )
+            typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
 
-            response_data: dict = {
-                "token": app.create_new_auth_token(request_data["name"])
-            }
+            request_data = request.json
 
-            with open(cert_path) as inf:
-                response_data["certificate"] = inf.read()
+            if (
+                typed_pairing_code.strip().upper()
+                == request_data["pairing_code"].upper()
+            ):
+                console.print("[magenta]Paired successfully")
+                cert_path, _ = get_certificate_key_path(
+                    "server", create=True, hostnames=app.hostnames
+                )
 
-            return response_data
+                response_data: dict = {
+                    "token": app.create_new_auth_token(request_data["name"])
+                }
 
-        console.print("[red][bold]Pairing code did not match; pairing failed!")
-        abort(401)
+                with open(cert_path) as inf:
+                    response_data["certificate"] = inf.read()
+
+                return response_data
+
+            console.print("[red][bold]Pairing code did not match; pairing failed!")
+            abort(401)
 
     @app.get("/configuration")
     @auth.login_required

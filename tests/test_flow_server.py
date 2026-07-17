@@ -1,3 +1,6 @@
+import threading
+import time
+
 import platformdirs
 import pytest
 
@@ -139,9 +142,7 @@ class TestCallback:
 
         assert app._get_desired_host() is None
 
-    def test_follower_connect_is_observed_by_the_reconciler(
-        self, app, follower_device
-    ):
+    def test_follower_connect_is_observed_by_the_reconciler(self, app, follower_device):
         app.callback(follower_device.receiver, connect_notification(follower_device))
 
         assert app.reconciler._connected[follower_device] is True
@@ -150,9 +151,7 @@ class TestCallback:
         self, app, follower_device
     ):
         app.callback(follower_device.receiver, connect_notification(follower_device))
-        app.callback(
-            follower_device.receiver, disconnect_notification(follower_device)
-        )
+        app.callback(follower_device.receiver, disconnect_notification(follower_device))
 
         assert app.reconciler._connected[follower_device] is False
 
@@ -267,3 +266,47 @@ class TestEventsRoute:
         response.response.close()
 
         assert len(app.events._subscribers) == 0
+
+
+class TestPairingRoute:
+    def test_concurrent_pairing_requests_are_serialized(self, app, monkeypatch):
+        call_count = 0
+        release_first = threading.Event()
+
+        def fake_ask(prompt):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Hold the lock until the test says the first "operator" has
+                # finished typing in the pairing code.
+                release_first.wait(timeout=2)
+            return "000000"
+
+        monkeypatch.setattr(flow_server.Prompt, "ask", fake_ask)
+
+        def do_pairing(name):
+            with app.test_request_context(
+                "/pairing",
+                method="POST",
+                json={"pairing_code": "000000", "name": name},
+            ):
+                app.view_functions["pair"]()
+
+        first = threading.Thread(target=do_pairing, args=("host-a",))
+        first.start()
+        while call_count < 1:
+            time.sleep(0.01)
+
+        second = threading.Thread(target=do_pairing, args=("host-b",))
+        second.start()
+
+        # The second request should be blocked waiting on the lock -- not
+        # yet inside its own Prompt.ask() -- for as long as we withhold it.
+        time.sleep(0.1)
+        assert call_count == 1
+
+        release_first.set()
+        first.join(timeout=2)
+        second.join(timeout=2)
+
+        assert call_count == 2
