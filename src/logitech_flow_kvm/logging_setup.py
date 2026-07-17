@@ -40,6 +40,3 @@ def configure_logging(logger: logging.Logger | None = None) -> None:
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
-
-    # Otherwise every request Flask's dev server handles logs a line.
-    logging.getLogger("werkzeug").setLevel(logging.WARNING)

@@ -114,12 +114,3 @@ class TestConfigureLogging:
                     handler.close()
             root.handlers = original_handlers
             root.setLevel(original_level)
-
-    def test_pins_the_werkzeug_logger_to_warning(self, user_log_dir, monkeypatch):
-        monkeypatch.setattr(logging_setup.sys, "stdout", FakeStream(is_tty=True))
-        logger = logging.Logger("test-configure-logging-werkzeug")
-        logging.getLogger("werkzeug").setLevel(logging.NOTSET)
-
-        logging_setup.configure_logging(logger)
-
-        assert logging.getLogger("werkzeug").level == logging.WARNING
