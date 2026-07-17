@@ -13,6 +13,8 @@ This utility works by monitoring one of your attached Logitech devices to see wh
 
 # Installation
 
+Requires Python 3.10 or later.
+
 ```
 pip install logitech-flow-kvm
 ```
@@ -20,9 +22,7 @@ pip install logitech-flow-kvm
 You can also install the in-development version with:
 
 ```
-
-pip install https://github.com/coddingtonbear/logitech-flow-kvm/archive/master.zip
-
+pip install https://github.com/coddingtonbear/logitech-flow-kvm/archive/main.zip
 ```
 
 # Basic Use

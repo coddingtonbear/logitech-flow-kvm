@@ -1,5 +1,100 @@
 [build-system]
-requires = [
-    "setuptools>=30.3.0",
-    "wheel",
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "logitech-flow-kvm"
+version = "1.2.0"
+description = "Quickly switch between paired devices when using a mouse and keyboard that supports Logitech Flow."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Adam Coddington", email = "me@adamcoddington.net" },
 ]
+requires-python = ">=3.10"
+keywords = ["logitech", "kvm", "flow", "unifying", "hidpp"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
+dependencies = [
+    # solaar >= 1.1.10 grew hard dependencies on dbus-python and PyGObject
+    # (for its GUI), which require system-level headers to build and make it
+    # unusable as a plain library dependency.
+    "solaar>=1.1.8,<1.1.10",
+    "bitstruct>=8.15.1,<10",
+    "safdie>=2.0.1,<3.0",
+    "flask>=3.0,<4.0",
+    "flask-httpauth>=4.7.0,<5.0",
+    "requests>=2.31,<3.0",
+    "rich>=13.0,<15.0",
+    "cryptography>=42.0",
+    "platformdirs>=4.0,<5.0",
+    "psutil>=5.9",
+    "pyperclip>=1.8.2,<2.0",
+]
+
+[project.urls]
+Repository = "https://github.com/coddingtonbear/logitech-flow-kvm"
+Issues = "https://github.com/coddingtonbear/logitech-flow-kvm/issues"
+
+[project.scripts]
+logitech-flow-kvm = "logitech_flow_kvm.cli:main"
+
+[project.entry-points."logitech_flow_kvm.commands"]
+list-devices = "logitech_flow_kvm.commands.list_devices:ListDevices"
+switch-to-host = "logitech_flow_kvm.commands.switch_to_host:SwitchToHost"
+watch = "logitech_flow_kvm.commands.watch:Watch"
+flow-server = "logitech_flow_kvm.commands.flow_server:FlowServer"
+flow-client = "logitech_flow_kvm.commands.flow_client:FlowClient"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.15",
+    "mypy>=1.14",
+    "types-requests",
+    "types-psutil",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/logitech_flow_kvm"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "UP", # pyupgrade
+    "B",  # flake8-bugbear
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+known-first-party = ["logitech_flow_kvm"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --tb=short"
+testpaths = ["tests"]

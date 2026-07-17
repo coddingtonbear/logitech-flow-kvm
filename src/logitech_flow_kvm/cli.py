@@ -1,8 +1,7 @@
-import sys
 import logging.config
+import sys
 
 from safdie import SafdieRunner
-
 
 LOGGING_CONFIG = {
     "version": 1,

@@ -4,7 +4,7 @@ import uuid
 from argparse import ArgumentParser
 from functools import partial
 
-import appdirs
+import platformdirs
 import pyperclip
 from flask import Flask
 from flask import abort
@@ -85,7 +85,10 @@ class FlowServerAPI(Flask):
         for listener in self.listeners:
             listener.start()
 
-        user_data_dir = appdirs.user_data_dir(constants.APP_NAME, constants.APP_AUTHOR)
+        user_data_dir = platformdirs.user_data_dir(
+            constants.APP_NAME, constants.APP_AUTHOR
+        )
+        os.makedirs(user_data_dir, exist_ok=True)
 
         self.db = sqlite3.Connection(
             os.path.join(user_data_dir, "tokens.db"), check_same_thread=False
@@ -212,7 +215,7 @@ def bind_routes(app: FlowServerAPI) -> None:
                 "token": app.create_new_auth_token(request_data["name"])
             }
 
-            with open(cert_path, "r") as inf:
+            with open(cert_path) as inf:
                 response_data["certificate"] = inf.read()
 
             return response_data
@@ -285,7 +288,7 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def handle(self) -> None:
-        device_id_map: dict[str, Device] = {
+        device_id_map: dict[str, Device | None] = {
             self.options.leader_device: None,
             **{follower: None for follower in self.options.follower_devices},
         }
@@ -303,14 +306,16 @@ class FlowServer(LogitechFlowKvmCommand):
                 if None not in device_id_map.values():
                     break
 
-        for device_id, device_path in device_id_map.items():
-            if device_path is None:
+        found_devices: dict[str, Device] = {}
+        for device_id, found_device in device_id_map.items():
+            if found_device is None:
                 raise exceptions.DeviceNotFound(device_id)
+            found_devices[device_id] = found_device
 
-        leader_device = device_id_map[self.options.leader_device]
+        leader_device = found_devices[self.options.leader_device]
         follower_devices = []
         for device in self.options.follower_devices:
-            follower_devices.append(device_id_map[device])
+            follower_devices.append(found_devices[device])
 
         cert_path, key_path = get_certificate_key_path("server", create=True)
 

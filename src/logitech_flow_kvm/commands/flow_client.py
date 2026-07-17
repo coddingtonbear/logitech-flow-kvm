@@ -174,8 +174,8 @@ class FlowClient(LogitechFlowKvmCommand):
                     raise exceptions.ServerNotPaired()
             except (requests.exceptions.SSLError, exceptions.ServerNotPaired):
                 token = self.pair()
-            except requests.exceptions.RequestException:
-                raise exceptions.ServerNotAvailable()
+            except requests.exceptions.RequestException as e:
+                raise exceptions.ServerNotAvailable() from e
         else:
             token = self.pair()
 
