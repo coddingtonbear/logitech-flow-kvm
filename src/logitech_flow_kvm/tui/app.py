@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from textual.widgets import RichLog
 
 from ..logging_setup import LOG_FORMAT
 from .logging_handler import TextualLogHandler
+from .pairing import PairingCodeModal
 from .widgets import StatusPanel
 
 
@@ -59,3 +61,22 @@ class FlowTUIApp(App):
         """Thread-safe: call from any background thread to refresh the
         status panel."""
         self.call_from_thread(self.query_one(StatusPanel).update, renderable)
+
+    def request_pairing_code(self, remote_addr: str) -> str | None:
+        """Thread-safe: call from the Flask request thread to show the
+        pairing modal and block until the operator answers it -- `None` if
+        they cancel (Escape).
+
+        `push_screen_wait` looks like the obvious tool here, but it requires
+        an active Textual *worker* context, which `call_from_thread` doesn't
+        provide -- calling it this way raises `NoActiveWorker`. Bridging a
+        plain `push_screen(callback=...)` through a thread-safe queue avoids
+        that requirement entirely.
+        """
+        result: queue.Queue[str | None] = queue.Queue(maxsize=1)
+
+        def push() -> None:
+            self.push_screen(PairingCodeModal(remote_addr), callback=result.put)
+
+        self.call_from_thread(push)
+        return result.get()

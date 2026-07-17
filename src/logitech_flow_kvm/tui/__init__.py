@@ -1,5 +1,6 @@
 from .app import FlowTUIApp
 from .logging_handler import TextualLogHandler
+from .pairing import PairingCodeModal
 from .widgets import ClientStatus
 from .widgets import DeviceStatus
 from .widgets import ServerStatus
@@ -11,6 +12,7 @@ __all__ = [
     "ClientStatus",
     "DeviceStatus",
     "FlowTUIApp",
+    "PairingCodeModal",
     "ServerStatus",
     "StatusPanel",
     "TextualLogHandler",

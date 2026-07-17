@@ -278,7 +278,8 @@ def bind_routes(app: FlowServerAPI) -> None:
     @app.route("/pairing", methods=["POST"])
     def pair():
         # Serialized: two pairing attempts running at once would interleave
-        # their Prompt.ask() calls on the same stdin/stdout.
+        # either their Prompt.ask() calls on the same stdin/stdout, or their
+        # pairing modals on the same TUI.
         with app.pairing_lock:
             logger.info(
                 "Received pairing request from %s; a pairing code has been "
@@ -286,12 +287,18 @@ def bind_routes(app: FlowServerAPI) -> None:
                 "code below to complete the pairing process.",
                 request.remote_addr,
             )
-            typed_pairing_code = Prompt.ask("Pairing code")
+            if app.tui is not None:
+                typed_pairing_code = app.tui.request_pairing_code(
+                    request.remote_addr or "unknown"
+                )
+            else:
+                typed_pairing_code = Prompt.ask("Pairing code")
 
             request_data = request.json
 
             if (
-                typed_pairing_code.strip().upper()
+                typed_pairing_code is not None
+                and typed_pairing_code.strip().upper()
                 == request_data["pairing_code"].upper()
             ):
                 logger.info("Paired successfully")

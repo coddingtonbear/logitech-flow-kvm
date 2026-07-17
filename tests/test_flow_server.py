@@ -433,3 +433,45 @@ class TestPairingRoute:
         second.join(timeout=2)
 
         assert call_count == 2
+
+
+class TestPairingRouteWithTui:
+    def test_uses_the_tui_modal_instead_of_prompt_ask(self, app, monkeypatch):
+        tui = Mock()
+        tui.request_pairing_code.return_value = "000000"
+        app.tui = tui
+        ask_mock = Mock(side_effect=AssertionError("should not use Prompt.ask"))
+        monkeypatch.setattr(flow_server.Prompt, "ask", ask_mock)
+        client = app.test_client()
+
+        response = client.post(
+            "/pairing", json={"pairing_code": "000000", "name": "host-a"}
+        )
+
+        assert response.status_code == 200
+        tui.request_pairing_code.assert_called_once()
+        ask_mock.assert_not_called()
+
+    def test_cancelling_the_modal_fails_pairing(self, app):
+        tui = Mock()
+        tui.request_pairing_code.return_value = None
+        app.tui = tui
+        client = app.test_client()
+
+        response = client.post(
+            "/pairing", json={"pairing_code": "000000", "name": "host-a"}
+        )
+
+        assert response.status_code == 401
+
+    def test_wrong_code_from_the_modal_fails_pairing(self, app):
+        tui = Mock()
+        tui.request_pairing_code.return_value = "999999"
+        app.tui = tui
+        client = app.test_client()
+
+        response = client.post(
+            "/pairing", json={"pairing_code": "000000", "name": "host-a"}
+        )
+
+        assert response.status_code == 401
