@@ -54,7 +54,7 @@ You can run a command like this:
 
 Note that the `1` in the above command immediately after `flow-server` indicates that the host number of your server is `1`.  This should match the host number you've paired your mouse and keyboard with your device as (i.e. when your mouse or keyboard is connected to this computer, the light for `1` is lit on the keyboard or mouse's device selector).
 
-After running the above command, you'll receive some output indicating what hostnames the server was bound to; on my computer, this looks like this:
+When run in a terminal, `flow-server` shows an interactive display: a status panel at the top (bind address/port, leader and follower connection state, and which clients are currently connected) and a scrolling log underneath. The bind address is also logged as a plain line when the server starts, and looks something like this:
 
 ```
 ...
@@ -65,6 +65,8 @@ After running the above command, you'll receive some output indicating what host
 ```
 
 From the above lines, you'll want to select an IP address that can be reached from your clients.  In my case, I'll be using `10.224.224.120` for connections from the clients to the server.
+
+(If you're running `flow-server` non-interactively -- e.g. under systemd, or with its output redirected to a file -- it skips the interactive display entirely and just logs plain, timestamped lines instead, so it works the same either way. See "Logs" below.)
 
 If you'd rather connect using a hostname (e.g. an mDNS `.local`/`.lan` name) instead of an IP address, pass it with `--hostname`/`-H` (repeatable) so it gets included in the server's certificate -- otherwise clients connecting by that hostname will fail TLS verification, since the certificate only lists the server's IP addresses by default:
 
@@ -82,9 +84,11 @@ On the other computers you'd like to use this feature with, you can run the foll
 > logitech-flow-kvm flow-client 2 10.224.224.120
 ```
 
-If this is your first time connecting to this server, you will be walked through a brief pairing process for establishing a secure connection between your server and client instances.  Afterward, the client will connect, gather some configuration options from the server, and will instruct your "follower" devices to change their hosts as necessary in the future.
+If this is your first time connecting to this server, you will be walked through a brief pairing process for establishing a secure connection between your server and client instances: the client displays a pairing code, and you enter it on the server -- as a popup in `flow-server`'s display if it's running in a terminal, or as an ordinary prompt if it's running non-interactively.  Afterward, the client will connect, gather some configuration options from the server, and will instruct your "follower" devices to change their hosts as necessary in the future.
 
 Note that the `2` above after `flow-client` indicates the host number your devices have paired with your computer under.  See "Server" above for details.
+
+Like `flow-server`, `flow-client` shows the same kind of interactive display (device/leader status on top, a scrolling log below) when run in a terminal, and falls back to plain logging otherwise.
 
 # How to
 
@@ -146,6 +150,16 @@ You can respond run a command that will listen to when the "MX Keys Mini" device
 ```
 > logitech-flow-kvm watch --on-disconnect-execute="logitech-flow-kvm switch-to-host /dev/hidraw5:1 2" /dev/hidraw4:1
 ```
+
+# Logs
+
+`flow-server` and `flow-client` both write everything they log to a rotating log file, in addition to wherever it's also shown (the interactive display's scrolling log, or plain stdout when running non-interactively) -- so you can always go back and check what happened even if it's scrolled off-screen or you weren't watching the terminal. The log file lives in your platform's standard per-app log directory (via [platformdirs](https://pypi.org/project/platformdirs/)); on Linux, that's:
+
+```
+~/.local/state/Logitech Flow KVM/log/logitech-flow-kvm.log
+```
+
+It's capped at 5MB, rotating through up to 5 backups (`logitech-flow-kvm.log.1`, `.2`, ...) before the oldest is discarded, so it won't grow without bound.
 
 # Credits
 
