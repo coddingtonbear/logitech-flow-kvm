@@ -2,6 +2,7 @@ import json
 import os
 import random
 import string
+import threading
 import time
 from argparse import ArgumentParser
 from functools import partial
@@ -11,6 +12,7 @@ import pyperclip
 import requests
 import urllib3
 from rich.console import Console
+from rich.progress import Progress
 from rich.table import Table
 from urllib3.exceptions import InsecureRequestWarning
 
@@ -21,11 +23,17 @@ from ..hidpp import NotificationListener
 from ..hidpp import PairedDevice
 from ..hidpp import Receiver
 from ..hidpp import find_receivers
-from ..util import change_device_host
+from ..reconciler import Reconciler
+from ..sse import parse_sse_stream
 from ..util import get_host_certificate_path_and_token
+from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from ..util import set_host_certificate_and_token
 from . import LogitechFlowKvmCommand
+
+# Backoff for reconnecting the /events stream after it drops.
+EVENTS_MIN_BACKOFF = 1.0
+EVENTS_MAX_BACKOFF = 30.0
 
 
 class FlowClient(LogitechFlowKvmCommand):
@@ -34,71 +42,102 @@ class FlowClient(LogitechFlowKvmCommand):
     cert: str | None = None
     token: str | None = None
 
-    device_status: dict[Receiver, dict[PairedDevice, int]] = {}
+    follower_devices: list[PairedDevice]
+    local_receivers: list[Receiver]
+    reconciler: Reconciler
+    # The leader's last-known host, as reported over the server's /events
+    # stream. `None` until the first event arrives (or the stream's initial,
+    # atomic snapshot -- see `sse.EventBroadcaster.subscribe`).
+    leader_host: int | None = None
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
         parser.add_argument("host_number", type=int)
         parser.add_argument("server")
-        parser.add_argument("--sleep-time", "-s", default=0.25, type=float)
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
 
     def callback(self, receiver: Receiver, notification: Notification) -> None:
-        if notification.sub_id == 0x41:
-            result = parse_connection_status(notification.data)
+        if notification.sub_id != 0x41:
+            return
 
-            if receiver not in self.device_status:
-                self.device_status[receiver] = {}
+        device = receiver.get_device(notification.devnumber)
+        if device is None:
+            return
 
-            device = receiver.get_device(notification.devnumber)
-            if device is None:
-                return
+        result = parse_connection_status(notification.data)
+        connected = result["link_status"] == 0
+        is_leader = device.id == self.leader_id
 
-            if result["link_status"] == 0:
-                self.device_status[receiver][device] = self.options.host_number
-                self.console.print(
-                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
-                )
+        if connected:
+            self.console.print(
+                f":white_heavy_check_mark: [bold]Device {device.id} connected"
+            )
+        else:
+            self.console.print(f":x: [bold]Device {device.id} disconnected")
+
+        if not is_leader:
+            self.reconciler.observe(device, connected)
+
+        if connected:
+            if is_leader:
+                # Positive evidence: the leader is here. Report it so every
+                # client (including this one) learns to converge followers
+                # toward this host.
                 response = self.request(
                     "PUT",
-                    self.build_url("device", device.id),
+                    self.build_url("leader-host"),
                     data=str(self.options.host_number),
                 )
                 response.raise_for_status()
 
-                clipboard_response = self.request("GET", self.build_url("clipboard"))
-                if clipboard_response.ok:
-                    pyperclip.copy(clipboard_response.text)
-            else:
-                self.console.print(f":x: [bold]Device {device.id} disconnected")
+            clipboard_response = self.request("GET", self.build_url("clipboard"))
+            if clipboard_response.ok:
+                pyperclip.copy(clipboard_response.text)
+        elif is_leader:
+            clipboard_data = pyperclip.paste()
+            clipboard_response = self.request(
+                "PUT",
+                self.build_url("clipboard"),
+                data=clipboard_data.encode("utf-8"),
+            )
+            if clipboard_response.ok:
+                self.console.print(
+                    "Clipboard contents set on server with "
+                    f"{len(clipboard_data)} bytes of data"
+                )
 
-                if device.id == self.leader_id:
-                    clipboard_data = pyperclip.paste()
-                    clipboard_response = self.request(
-                        "PUT",
-                        self.build_url("clipboard"),
-                        data=clipboard_data.encode("utf-8"),
-                    )
-                    if clipboard_response.ok:
-                        self.console.print(
-                            "Clipboard contents set on server with "
-                            f"{len(clipboard_data)} bytes of data"
-                        )
+    def _handle_event(self, event_type: str, data: str) -> None:
+        if event_type == "leader-host":
+            self.leader_host = int(data)
+            self.reconciler.poke()
+        elif event_type == "host-connected":
+            self.console.print(f"[cyan]Host {data} connected")
 
-                    time.sleep(self.options.sleep_time)
-
-                    response = self.request("GET", self.build_url("device", device.id))
-                    response.raise_for_status()
-                    target_host = int(response.content)
-
-                    for known_device_status in self.device_status.values():
-                        for known_device in known_device_status.keys():
-                            if known_device.id in self.follower_ids:
-                                self.console.print(
-                                    f"Asking follower {known_device} to "
-                                    f" switch to {target_host}"
-                                )
-                                change_device_host(known_device, target_host)
+    def _consume_events(self) -> None:
+        backoff = EVENTS_MIN_BACKOFF
+        while not self._stop.is_set():
+            try:
+                response = self.request(
+                    "GET", self.build_url("events"), stream=True, timeout=(10, None)
+                )
+                response.raise_for_status()
+                # Re-announce our own devices' current status as a side
+                # effect of (re)establishing this connection, so the server
+                # recovers cross-client state (e.g. after a restart) at the
+                # same moment we're asking it for its current state.
+                for receiver in self.local_receivers:
+                    receiver.notify_devices()
+                backoff = EVENTS_MIN_BACKOFF
+                for event_type, data in parse_sse_stream(
+                    response.iter_lines(decode_unicode=True)
+                ):
+                    self._handle_event(event_type, data)
+            except requests.exceptions.RequestException:
+                pass
+            if self._stop.is_set():
+                return
+            time.sleep(backoff)
+            backoff = min(backoff * 2, EVENTS_MAX_BACKOFF)
 
     def build_url(self, *route_segments: str) -> str:
         return (
@@ -188,14 +227,46 @@ class FlowClient(LogitechFlowKvmCommand):
         self.leader_id = response["leader"]
         self.follower_ids = response["followers"]
 
-        for info in find_receivers():
-            receiver = Receiver(info)
-            receiver.enable_connection_notifications()
+        device_id_map: dict[str, PairedDevice | None] = {
+            follower: None for follower in self.follower_ids
+        }
+        self.local_receivers = []
 
+        with Progress(transient=True) as progress:
+            enumerate_task = progress.add_task(
+                "Finding devices...", total=get_theoretical_max_device_count()
+            )
+            for info in find_receivers():
+                receiver = Receiver(info)
+                self.local_receivers.append(receiver)
+                for device in receiver.enumerate_devices():
+                    if device.serial in device_id_map:
+                        device_id_map[device.serial] = device
+                progress.advance(enumerate_task, receiver.max_devices)
+
+        self.follower_devices = []
+        for follower_id, found_device in device_id_map.items():
+            if found_device is None:
+                raise exceptions.DeviceNotFound(follower_id)
+            self.follower_devices.append(found_device)
+
+        self.reconciler = Reconciler(
+            self.follower_devices,
+            get_desired_host=lambda: self.leader_host,
+            host_number=self.options.host_number,
+        )
+        self.reconciler.start()
+
+        for receiver in self.local_receivers:
+            receiver.enable_connection_notifications()
             listener = NotificationListener(
                 receiver.path, partial(self.callback, receiver)
             )
             listener.start()
+
+        self._stop = threading.Event()
+        events_thread = threading.Thread(target=self._consume_events, daemon=True)
+        events_thread.start()
 
         table = Table()
         table.add_column("Setting Name")
@@ -212,4 +283,5 @@ class FlowClient(LogitechFlowKvmCommand):
             while True:
                 time.sleep(0.5)
         except KeyboardInterrupt:
-            pass
+            self._stop.set()
+            self.reconciler.stop()

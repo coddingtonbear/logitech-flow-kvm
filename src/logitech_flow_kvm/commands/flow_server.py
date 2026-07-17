@@ -1,4 +1,5 @@
 import os
+import queue
 import sqlite3
 import uuid
 from argparse import ArgumentParser
@@ -7,6 +8,7 @@ from functools import partial
 import platformdirs
 import pyperclip
 from flask import Flask
+from flask import Response
 from flask import abort
 from flask import request
 from flask_httpauth import HTTPTokenAuth
@@ -21,16 +23,20 @@ from ..hidpp import Notification
 from ..hidpp import NotificationListener
 from ..hidpp import PairedDevice
 from ..hidpp import Receiver
-from ..util import change_device_host
+from ..reconciler import Reconciler
+from ..sse import EventBroadcaster
+from ..sse import format_sse
 from ..util import get_certificate_key_path
 from ..util import get_devices
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
 
-
-class UnknownDevice(Exception):
-    pass
+# How long an /events subscriber's connection can sit idle before we send a
+# keepalive comment -- long enough to be cheap, short enough that a dead TCP
+# connection (the client vanished without a clean close) gets noticed and its
+# queue cleaned up promptly rather than leaking forever.
+KEEPALIVE_INTERVAL = 15.0
 
 
 class FlowServerAPI(Flask):
@@ -41,7 +47,13 @@ class FlowServerAPI(Flask):
     follower_devices: list[PairedDevice]
     hostnames: list[str]
 
-    device_status: dict[Receiver, dict[PairedDevice, int]] = {}
+    # The one piece of state followers everywhere care about: which host the
+    # leader is currently on. Updated only from positive evidence (a connect
+    # notification, seen either directly here or reported by a client via
+    # `PUT /leader-host`), broadcast to every subscribed client over SSE, and
+    # fed to `reconciler` to drive this host's own local followers.
+    events: EventBroadcaster
+    reconciler: Reconciler
 
     console: Console = Console()
 
@@ -61,6 +73,13 @@ class FlowServerAPI(Flask):
         self.follower_devices = follower_devices
         self.hostnames = hostnames
 
+        self.events = EventBroadcaster()
+        self.reconciler = Reconciler(
+            follower_devices,
+            get_desired_host=self._get_desired_host,
+            host_number=host_number,
+        )
+
         # Listen to change events for all relevant devices, one listener per
         # distinct receiver (leader and followers may share a receiver).
         self.listeners = []
@@ -79,6 +98,7 @@ class FlowServerAPI(Flask):
 
         for listener in self.listeners:
             listener.start()
+        self.reconciler.start()
 
         user_data_dir = platformdirs.user_data_dir(
             constants.APP_NAME, constants.APP_AUTHOR
@@ -91,6 +111,10 @@ class FlowServerAPI(Flask):
         self.migrate_db()
 
         super().__init__(*args, **kwargs)
+
+    def _get_desired_host(self) -> int | None:
+        state = self.events.state
+        return int(state) if state is not None else None
 
     def migrate_db(self) -> None:
         cursor = self.db.cursor()
@@ -154,34 +178,29 @@ class FlowServerAPI(Flask):
             return
 
         result = parse_connection_status(notification.data)
+        connected = result["link_status"] == 0
 
-        if receiver not in self.device_status:
-            self.device_status[receiver] = {}
-
-        if result["link_status"] == 0:
-            self.device_status[receiver][device] = self.host_number
-            self.console.print(
-                f":white_heavy_check_mark: [bold]Device {device.id} connected"
-            )
+        if device is self.leader_device:
+            if connected:
+                self.console.print(
+                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
+                )
+                self.report_leader_host(self.host_number)
+            else:
+                self.console.print(f":x: [bold]Device {device.id} disconnected")
         else:
-            self.console.print(f":x: [bold]Device {device.id} disconnected")
+            self.reconciler.observe(device, connected)
+            if connected:
+                self.console.print(
+                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
+                )
+            else:
+                self.console.print(f":x: [bold]Device {device.id} disconnected")
 
-    def remote_device_status_change(self, id: str, new_host: int) -> None:
-        found_device = False
-
-        for devices in self.device_status.values():
-            for device in devices.keys():
-                if device.id == id:
-                    devices[device] = int(request.data)
-                    found_device = True
-
-        if not found_device:
-            raise UnknownDevice()
-
-        if self.leader_device.id == id:
-            for device in self.follower_devices:
-                self.console.print(f"Asking follower {device} to switch to {new_host}")
-                change_device_host(device, new_host)
+    def report_leader_host(self, new_host: int) -> None:
+        """Record positive evidence that the leader is now on `new_host`."""
+        self.events.set_state("leader-host", str(new_host))
+        self.reconciler.poke()
 
 
 def bind_routes(app: FlowServerAPI) -> None:
@@ -232,33 +251,35 @@ def bind_routes(app: FlowServerAPI) -> None:
 
         return response
 
-    @app.get("/device")
+    @app.route("/leader-host", methods=["PUT"])
     @auth.login_required
-    def device_status():
-        response: dict = {}
+    def leader_host():
+        app.report_leader_host(int(request.data))
+        return ""
 
-        for devices in app.device_status.values():
-            for device, status in devices.items():
-                response[device.id] = status
-
-        return response
-
-    @app.route("/device/<id>", methods=["GET", "PUT"])
+    @app.route("/events")
     @auth.login_required
-    def device_status_detail(id: str):
-        if request.method == "GET":
-            for devices in app.device_status.values():
-                for device, status in devices.items():
-                    if device.id == id:
-                        return str(status)
-            abort(404)
-        elif request.method == "PUT":
+    def events():
+        connecting_host = auth.current_user()
+        subscriber_queue, current = app.events.subscribe()
+        app.console.print(f"[cyan]Host {connecting_host} connected")
+        app.events.broadcast(
+            "host-connected", str(connecting_host), exclude=subscriber_queue
+        )
+
+        def stream():
             try:
-                app.remote_device_status_change(id, int(request.data))
-                return ""
-            except UnknownDevice:
-                abort(404)
-        abort(405)
+                if current is not None:
+                    yield format_sse("leader-host", current)
+                while True:
+                    try:
+                        yield subscriber_queue.get(timeout=KEEPALIVE_INTERVAL)
+                    except queue.Empty:
+                        yield ": keepalive\n\n"
+            finally:
+                app.events.unsubscribe(subscriber_queue)
+
+        return Response(stream(), mimetype="text/event-stream")
 
     @app.route("/clipboard", methods=["PUT", "GET"])
     @auth.login_required
@@ -370,6 +391,7 @@ class FlowServer(LogitechFlowKvmCommand):
                 port=self.options.port,
                 host=self.options.binding_interface,
                 ssl_context=(cert_path, key_path),
+                threaded=True,
             )
         except KeyboardInterrupt:
             pass
