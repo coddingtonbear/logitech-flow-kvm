@@ -1,3 +1,4 @@
+import logging
 import os
 import queue
 import sqlite3
@@ -13,10 +14,8 @@ from flask import Response
 from flask import abort
 from flask import request
 from flask_httpauth import HTTPTokenAuth
-from rich.console import Console
 from rich.progress import Progress
 from rich.prompt import Prompt
-from rich.table import Table
 
 from .. import constants
 from .. import exceptions
@@ -32,6 +31,8 @@ from ..util import get_devices
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from . import LogitechFlowKvmCommand
+
+logger = logging.getLogger(__name__)
 
 # How long an /events subscriber's connection can sit idle before we send a
 # keepalive comment -- long enough to be cheap, short enough that a dead TCP
@@ -55,8 +56,6 @@ class FlowServerAPI(Flask):
     # fed to `reconciler` to drive this host's own local followers.
     events: EventBroadcaster
     reconciler: Reconciler
-
-    console: Console = Console()
 
     db: sqlite3.Connection
 
@@ -192,20 +191,16 @@ class FlowServerAPI(Flask):
 
         if device is self.leader_device:
             if connected:
-                self.console.print(
-                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
-                )
+                logger.info("Device %s connected", device.id)
                 self.report_leader_host(self.host_number)
             else:
-                self.console.print(f":x: [bold]Device {device.id} disconnected")
+                logger.info("Device %s disconnected", device.id)
         else:
             self.reconciler.observe(device, connected)
             if connected:
-                self.console.print(
-                    f":white_heavy_check_mark: [bold]Device {device.id} connected"
-                )
+                logger.info("Device %s connected", device.id)
             else:
-                self.console.print(f":x: [bold]Device {device.id} disconnected")
+                logger.info("Device %s disconnected", device.id)
 
     def report_leader_host(self, new_host: int) -> None:
         """Record positive evidence that the leader is now on `new_host`."""
@@ -213,9 +208,10 @@ class FlowServerAPI(Flask):
         self.reconciler.poke()
 
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
-        self.console.print(
-            f"[yellow]Could not switch {device.id} to the desired host "
-            f"yet ({error}); will retry"
+        logger.warning(
+            "Could not switch %s to the desired host yet (%s); will retry",
+            device.id,
+            error,
         )
 
 
@@ -229,17 +225,15 @@ def bind_routes(app: FlowServerAPI) -> None:
     @app.route("/pairing", methods=["POST"])
     def pair():
         # Serialized: two pairing attempts running at once would interleave
-        # their Prompt.ask() calls on this one shared console.
+        # their Prompt.ask() calls on the same stdin/stdout.
         with app.pairing_lock:
-            console = Console()
-
-            console.print(
-                f"[magenta]Received pairing request from {request.remote_addr}; "
-                "a pairing code has been printed to the console running "
-                "`flow-client` enter that code below to complete the pairing "
-                "process."
+            logger.info(
+                "Received pairing request from %s; a pairing code has been "
+                "printed to the console running `flow-client`; enter that "
+                "code below to complete the pairing process.",
+                request.remote_addr,
             )
-            typed_pairing_code = Prompt.ask("[bright_magenta]Pairing code")
+            typed_pairing_code = Prompt.ask("Pairing code")
 
             request_data = request.json
 
@@ -247,7 +241,7 @@ def bind_routes(app: FlowServerAPI) -> None:
                 typed_pairing_code.strip().upper()
                 == request_data["pairing_code"].upper()
             ):
-                console.print("[magenta]Paired successfully")
+                logger.info("Paired successfully")
                 cert_path, _ = get_certificate_key_path(
                     "server", create=True, hostnames=app.hostnames
                 )
@@ -261,7 +255,7 @@ def bind_routes(app: FlowServerAPI) -> None:
 
                 return response_data
 
-            console.print("[red][bold]Pairing code did not match; pairing failed!")
+            logger.warning("Pairing code did not match; pairing failed")
             abort(401)
 
     @app.get("/configuration")
@@ -285,7 +279,7 @@ def bind_routes(app: FlowServerAPI) -> None:
     def events():
         connecting_host = auth.current_user()
         subscriber_queue, current = app.events.subscribe()
-        app.console.print(f"[cyan]Host {connecting_host} connected")
+        logger.info("Host %s connected", connecting_host)
         app.events.broadcast(
             "host-connected", str(connecting_host), exclude=subscriber_queue
         )
@@ -307,14 +301,12 @@ def bind_routes(app: FlowServerAPI) -> None:
     @app.route("/clipboard", methods=["PUT", "GET"])
     @auth.login_required
     def clipboard():
-        console = Console()
-
         if request.method == "GET":
             return pyperclip.paste()
         elif request.method == "PUT":
             pyperclip.copy(request.data.decode("utf-8"))
-            console.print(
-                f"Clipboard set from client with {len(request.data)} bytes of data"
+            logger.info(
+                "Clipboard set from client with %d bytes of data", len(request.data)
             )
             return ""
 
@@ -377,27 +369,16 @@ class FlowServer(LogitechFlowKvmCommand):
             "server", create=True, hostnames=self.options.hostname
         )
 
-        console = Console()
-
-        table = Table()
-        table.add_column("Setting Name")
-        table.add_column("Setting Value")
-
-        table.add_row("Leader", str(self.options.leader_device))
-        table.add_row(
-            "Followers",
-            "\n".join([str(dev) for dev in self.options.follower_devices]),
-        )
-        table.add_row("Certificate", cert_path)
-        table.add_row("Key", key_path)
-        table.add_row("Binding Interface", self.options.binding_interface)
-        table.add_row("Port", str(self.options.port))
+        logger.info("Leader: %s", self.options.leader_device)
+        logger.info("Followers: %s", ", ".join(self.options.follower_devices))
+        logger.info("Certificate: %s", cert_path)
+        logger.info("Key: %s", key_path)
+        logger.info("Binding interface: %s", self.options.binding_interface)
+        logger.info("Port: %s", self.options.port)
         if self.options.hostname:
-            table.add_row("Hostnames", "\n".join(self.options.hostname))
+            logger.info("Hostnames: %s", ", ".join(self.options.hostname))
 
-        console.print(table)
-
-        console.print("Press [red]CTRL+C[/red] to exit")
+        logger.info("Press CTRL+C to exit")
 
         app = FlowServerAPI(
             __name__,

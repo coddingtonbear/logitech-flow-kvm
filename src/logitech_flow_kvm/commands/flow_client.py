@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import random
 import string
@@ -11,9 +12,7 @@ from typing import Literal
 import pyperclip
 import requests
 import urllib3
-from rich.console import Console
 from rich.progress import Progress
-from rich.table import Table
 from urllib3.exceptions import InsecureRequestWarning
 
 from .. import constants
@@ -30,6 +29,8 @@ from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
 from ..util import set_host_certificate_and_token
 from . import LogitechFlowKvmCommand
+
+logger = logging.getLogger(__name__)
 
 # Backoff for reconnecting the /events stream after it drops.
 EVENTS_MIN_BACKOFF = 1.0
@@ -69,11 +70,9 @@ class FlowClient(LogitechFlowKvmCommand):
         is_leader = device.id == self.leader_id
 
         if connected:
-            self.console.print(
-                f":white_heavy_check_mark: [bold]Device {device.id} connected"
-            )
+            logger.info("Device %s connected", device.id)
         else:
-            self.console.print(f":x: [bold]Device {device.id} disconnected")
+            logger.info("Device %s disconnected", device.id)
 
         if not is_leader:
             self.reconciler.observe(device, connected)
@@ -101,15 +100,16 @@ class FlowClient(LogitechFlowKvmCommand):
                 data=clipboard_data.encode("utf-8"),
             )
             if clipboard_response.ok:
-                self.console.print(
-                    "Clipboard contents set on server with "
-                    f"{len(clipboard_data)} bytes of data"
+                logger.info(
+                    "Clipboard contents set on server with %d bytes of data",
+                    len(clipboard_data),
                 )
 
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
-        self.console.print(
-            f"[yellow]Could not switch {device.id} to the desired host "
-            f"yet ({error}); will retry"
+        logger.warning(
+            "Could not switch %s to the desired host yet (%s); will retry",
+            device.id,
+            error,
         )
 
     def _handle_event(self, event_type: str, data: str) -> None:
@@ -117,7 +117,7 @@ class FlowClient(LogitechFlowKvmCommand):
             self.leader_host = int(data)
             self.reconciler.poke()
         elif event_type == "host-connected":
-            self.console.print(f"[cyan]Host {data} connected")
+            logger.info("Host %s connected", data)
 
     def _consume_events(self) -> None:
         backoff = EVENTS_MIN_BACKOFF
@@ -166,18 +166,16 @@ class FlowClient(LogitechFlowKvmCommand):
     def pair(self) -> str:
         urllib3.disable_warnings(InsecureRequestWarning)
 
-        self.console.print(f"[magenta]Pairing with new server {self.options.server}...")
+        logger.info("Pairing with new server %s...", self.options.server)
         response = self.request("OPTIONS", self.build_url("pairing"), verify=False)
         if not response.ok:
             raise exceptions.ServerNotAvailable(self.options.server)
 
         pairing_code = "".join(random.choices(string.digits, k=6))
-        self.console.print(
-            f"[magenta]Pairing code: [bold][bright_magenta]{pairing_code}"
-        )
-        self.console.print(
-            "[magenta]To complete the pairing process, enter the above code "
-            "into the server console running `flow-server` when requested."
+        logger.info("Pairing code: %s", pairing_code)
+        logger.info(
+            "To complete the pairing process, enter the above code into the "
+            "server console running `flow-server` when requested."
         )
 
         response = self.request(
@@ -221,11 +219,9 @@ class FlowClient(LogitechFlowKvmCommand):
         return cert_path, token
 
     def handle(self):
-        self.console = Console()
-
         self.cert, self.token = self.get_certificate_path_and_token()
 
-        self.console.print(f"[bold]Connecting to server at {self.build_url()}...")
+        logger.info("Connecting to server at %s...", self.build_url())
         result = self.request("GET", self.build_url("configuration"))
         result.raise_for_status()
 
@@ -275,16 +271,10 @@ class FlowClient(LogitechFlowKvmCommand):
         events_thread = threading.Thread(target=self._consume_events, daemon=True)
         events_thread.start()
 
-        table = Table()
-        table.add_column("Setting Name")
-        table.add_column("Setting Value")
-
-        table.add_row("Server URL", self.build_url())
-        table.add_row("Certificate", self.cert)
-        table.add_row("Leader Serial", self.leader_id)
-        table.add_row("Follower Serials", "\n".join(self.follower_ids))
-
-        self.console.print(table)
+        logger.info("Server URL: %s", self.build_url())
+        logger.info("Certificate: %s", self.cert)
+        logger.info("Leader serial: %s", self.leader_id)
+        logger.info("Follower serials: %s", ", ".join(self.follower_ids))
 
         try:
             while True:

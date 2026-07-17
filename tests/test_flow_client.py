@@ -58,7 +58,6 @@ def user_data_dir(tmp_path, monkeypatch):
 def make_client(**attrs) -> FlowClient:
     options = argparse.Namespace(host_number=2, server="myserver", port=24801)
     client = FlowClient(options=options)
-    client.console = Mock()
     for key, value in attrs.items():
         setattr(client, key, value)
     return client
