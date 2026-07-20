@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "logitech-flow-kvm"
-version = "2.0.0"
+version = "2.1.0"
 description = "Quickly switch between paired devices when using a mouse and keyboard that supports Logitech Flow."
 readme = "README.md"
 license = "MIT"
