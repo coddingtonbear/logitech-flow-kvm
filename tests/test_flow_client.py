@@ -327,6 +327,46 @@ class TestCallback:
         assert sent["url"] == client.build_url("clipboard")
         assert sent["data"] == b"local-clip"
 
+    def test_leader_connect_skips_the_clipboard_when_disabled(self, monkeypatch):
+        reconciler = Mock()
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, clipboard_enabled=False
+        )
+        receiver = Mock()
+        receiver.get_device.return_value = types.SimpleNamespace(id="LEADER01")
+        calls = []
+
+        def fake_request(method, url, **kwargs):
+            calls.append((method, url))
+            return FakeResponse(ok=True)
+
+        monkeypatch.setattr(client, "request", fake_request)
+        copy_mock = Mock(side_effect=AssertionError("should not be called"))
+        monkeypatch.setattr(flow_client.pyperclip, "copy", copy_mock)
+
+        client.callback(receiver, connection_notification(1, connected=True))
+
+        assert ("PUT", client.build_url("leader-host")) in calls
+        assert ("GET", client.build_url("clipboard")) not in calls
+        copy_mock.assert_not_called()
+
+    def test_leader_disconnect_skips_the_clipboard_when_disabled(self, monkeypatch):
+        reconciler = Mock()
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, clipboard_enabled=False
+        )
+        receiver = Mock()
+        receiver.get_device.return_value = types.SimpleNamespace(id="LEADER01")
+        paste_mock = Mock(side_effect=AssertionError("should not be called"))
+        monkeypatch.setattr(flow_client.pyperclip, "paste", paste_mock)
+        request_mock = Mock(side_effect=AssertionError("should not be called"))
+        monkeypatch.setattr(client, "request", request_mock)
+
+        client.callback(receiver, connection_notification(1, connected=False))
+
+        paste_mock.assert_not_called()
+        request_mock.assert_not_called()
+
     def test_follower_connect_is_observed_by_the_reconciler(self, monkeypatch):
         reconciler = Mock()
         client = make_client(leader_id="LEADER01", reconciler=reconciler)

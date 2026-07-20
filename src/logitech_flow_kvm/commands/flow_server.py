@@ -50,6 +50,7 @@ class FlowServerAPI(Flask):
     host_number: int
     binding_interface: str
     port: int
+    clipboard_enabled: bool
 
     listeners: list[NotificationListener]
     leader_device: PairedDevice
@@ -85,6 +86,7 @@ class FlowServerAPI(Flask):
         hostnames: list[str],
         binding_interface: str,
         port: int,
+        clipboard_enabled: bool = True,
         **kwargs,
     ):
         self.host_number = host_number
@@ -93,6 +95,7 @@ class FlowServerAPI(Flask):
         self.hostnames = hostnames
         self.binding_interface = binding_interface
         self.port = port
+        self.clipboard_enabled = clipboard_enabled
 
         self._leader_connected = False
 
@@ -363,6 +366,9 @@ def bind_routes(app: FlowServerAPI) -> None:
     @app.route("/clipboard", methods=["PUT", "GET"])
     @auth.login_required
     def clipboard():
+        if not app.clipboard_enabled:
+            abort(404)
+
         if request.method == "GET":
             return pyperclip.paste()
         elif request.method == "PUT":
@@ -383,6 +389,15 @@ class FlowServer(LogitechFlowKvmCommand):
         parser.add_argument("follower_devices", nargs="+")
         parser.add_argument("--binding-interface", "-b", default="0.0.0.0", type=str)
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
+        parser.add_argument(
+            "--no-clipboard",
+            action="store_true",
+            help=(
+                "Disable clipboard synchronization for this host. This host's "
+                "clipboard will neither be read nor written, and the "
+                "/clipboard endpoint will be unavailable to clients."
+            ),
+        )
         parser.add_argument(
             "--hostname",
             "-H",
@@ -439,6 +454,8 @@ class FlowServer(LogitechFlowKvmCommand):
         logger.info("Port: %s", self.options.port)
         if self.options.hostname:
             logger.info("Hostnames: %s", ", ".join(self.options.hostname))
+        if self.options.no_clipboard:
+            logger.info("Clipboard synchronization: disabled")
 
         app = FlowServerAPI(
             __name__,
@@ -448,6 +465,7 @@ class FlowServer(LogitechFlowKvmCommand):
             hostnames=self.options.hostname,
             binding_interface=self.options.binding_interface,
             port=self.options.port,
+            clipboard_enabled=not self.options.no_clipboard,
         )
 
         bind_routes(app)

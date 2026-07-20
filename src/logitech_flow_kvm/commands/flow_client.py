@@ -47,6 +47,7 @@ class FlowClient(LogitechFlowKvmCommand):
     follower_ids: list[str]
     cert: str | None = None
     token: str | None = None
+    clipboard_enabled: bool = True
 
     follower_devices: list[PairedDevice]
     local_receivers: list[Receiver]
@@ -66,6 +67,14 @@ class FlowClient(LogitechFlowKvmCommand):
         parser.add_argument("host_number", type=int)
         parser.add_argument("server")
         parser.add_argument("--port", "-p", default=constants.DEFAULT_PORT, type=int)
+        parser.add_argument(
+            "--no-clipboard",
+            action="store_true",
+            help=(
+                "Disable clipboard synchronization for this host. This host's "
+                "clipboard will neither be read nor written."
+            ),
+        )
 
     def callback(self, receiver: Receiver, notification: Notification) -> None:
         if notification.sub_id != 0x41:
@@ -99,21 +108,23 @@ class FlowClient(LogitechFlowKvmCommand):
                 )
                 response.raise_for_status()
 
-            clipboard_response = self.request("GET", self.build_url("clipboard"))
-            if clipboard_response.ok:
-                pyperclip.copy(clipboard_response.text)
+            if self.clipboard_enabled:
+                clipboard_response = self.request("GET", self.build_url("clipboard"))
+                if clipboard_response.ok:
+                    pyperclip.copy(clipboard_response.text)
         elif is_leader:
-            clipboard_data = pyperclip.paste()
-            clipboard_response = self.request(
-                "PUT",
-                self.build_url("clipboard"),
-                data=clipboard_data.encode("utf-8"),
-            )
-            if clipboard_response.ok:
-                logger.info(
-                    "Clipboard contents set on server with %d bytes of data",
-                    len(clipboard_data),
+            if self.clipboard_enabled:
+                clipboard_data = pyperclip.paste()
+                clipboard_response = self.request(
+                    "PUT",
+                    self.build_url("clipboard"),
+                    data=clipboard_data.encode("utf-8"),
                 )
+                if clipboard_response.ok:
+                    logger.info(
+                        "Clipboard contents set on server with %d bytes of data",
+                        len(clipboard_data),
+                    )
 
         self._publish_status()
 
@@ -257,6 +268,8 @@ class FlowClient(LogitechFlowKvmCommand):
         return cert_path, token
 
     def handle(self):
+        self.clipboard_enabled = not self.options.no_clipboard
+
         self.cert, self.token = self.get_certificate_path_and_token()
 
         logger.info("Connecting to server at %s...", self.build_url())
@@ -303,6 +316,8 @@ class FlowClient(LogitechFlowKvmCommand):
         logger.info("Certificate: %s", self.cert)
         logger.info("Leader serial: %s", self.leader_id)
         logger.info("Follower serials: %s", ", ".join(self.follower_ids))
+        if not self.clipboard_enabled:
+            logger.info("Clipboard synchronization: disabled")
 
         if sys.stdout.isatty():
 

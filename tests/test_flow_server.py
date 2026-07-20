@@ -391,6 +391,55 @@ class TestConnectedGuests:
         response.response.close()
 
 
+class TestClipboardRoute:
+    def test_get_returns_the_local_clipboard_when_enabled(self, app, monkeypatch):
+        monkeypatch.setattr(flow_server.pyperclip, "paste", lambda: "server-clip")
+        client = app.test_client()
+
+        response = client.get("/clipboard", headers=_auth_headers(app, "2"))
+
+        assert response.status_code == 200
+        assert response.text == "server-clip"
+
+    def test_put_sets_the_local_clipboard_when_enabled(self, app, monkeypatch):
+        copied: dict[str, str] = {}
+        monkeypatch.setattr(
+            flow_server.pyperclip, "copy", lambda text: copied.update(text=text)
+        )
+        client = app.test_client()
+
+        response = client.put(
+            "/clipboard", data=b"from-client", headers=_auth_headers(app, "2")
+        )
+
+        assert response.status_code == 200
+        assert copied["text"] == "from-client"
+
+    def test_get_is_not_found_when_clipboard_disabled(self, app, monkeypatch):
+        app.clipboard_enabled = False
+        paste_mock = Mock(side_effect=AssertionError("should not be called"))
+        monkeypatch.setattr(flow_server.pyperclip, "paste", paste_mock)
+        client = app.test_client()
+
+        response = client.get("/clipboard", headers=_auth_headers(app, "2"))
+
+        assert response.status_code == 404
+        paste_mock.assert_not_called()
+
+    def test_put_is_not_found_when_clipboard_disabled(self, app, monkeypatch):
+        app.clipboard_enabled = False
+        copy_mock = Mock(side_effect=AssertionError("should not be called"))
+        monkeypatch.setattr(flow_server.pyperclip, "copy", copy_mock)
+        client = app.test_client()
+
+        response = client.put(
+            "/clipboard", data=b"from-client", headers=_auth_headers(app, "2")
+        )
+
+        assert response.status_code == 404
+        copy_mock.assert_not_called()
+
+
 class TestPairingRoute:
     def test_concurrent_pairing_requests_are_serialized(self, app, monkeypatch):
         call_count = 0
