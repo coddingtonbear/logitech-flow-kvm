@@ -7,7 +7,6 @@ import sys
 import threading
 import time
 from argparse import ArgumentParser
-from functools import partial
 from typing import Literal
 
 import pyperclip
@@ -19,9 +18,9 @@ from urllib3.exceptions import InsecureRequestWarning
 from .. import constants
 from .. import exceptions
 from ..hidpp import Notification
-from ..hidpp import NotificationListener
 from ..hidpp import PairedDevice
 from ..hidpp import Receiver
+from ..hidpp import ReceiverManager
 from ..hidpp import find_receivers
 from ..reconciler import Reconciler
 from ..sse import parse_sse_stream
@@ -32,6 +31,7 @@ from ..tui import render_client_status
 from ..util import get_host_certificate_path_and_token
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
+from ..util import resolve_devices
 from ..util import set_host_certificate_and_token
 from . import LogitechFlowKvmCommand
 
@@ -68,6 +68,7 @@ class FlowClient(LogitechFlowKvmCommand):
 
     follower_devices: list[PairedDevice]
     local_receivers: list[Receiver]
+    manager: ReceiverManager
     reconciler: Reconciler
     # The leader's last-known host, as reported over the server's /events
     # stream. `None` until the first event arrives (or the stream's initial,
@@ -196,7 +197,12 @@ class FlowClient(LogitechFlowKvmCommand):
                 # recovers cross-client state (e.g. after a restart) at the
                 # same moment we're asking it for its current state.
                 for receiver in self.local_receivers:
-                    receiver.notify_devices()
+                    try:
+                        receiver.notify_devices()
+                    except OSError:
+                        # This receiver is gone (unplugged); the
+                        # ReceiverManager will rebuild it and re-announce.
+                        pass
                 backoff = EVENTS_MIN_BACKOFF
                 self._connected_to_server = True
                 self._publish_status()
@@ -331,6 +337,9 @@ class FlowClient(LogitechFlowKvmCommand):
             host_number=self.options.host_number,
             on_error=self._reconciler_error,
         )
+        self.manager = ReceiverManager(
+            self.local_receivers, rebind=self._bind_receivers, callback=self.callback
+        )
 
         self._stop = threading.Event()
 
@@ -353,6 +362,7 @@ class FlowClient(LogitechFlowKvmCommand):
             FlowTUIApp("flow-client", on_start=on_start).run()
             self._stop.set()
             self.reconciler.stop()
+            self.manager.stop()
         else:
             self.start_background_threads()
             try:
@@ -361,10 +371,23 @@ class FlowClient(LogitechFlowKvmCommand):
             except KeyboardInterrupt:
                 self._stop.set()
                 self.reconciler.stop()
+                self.manager.stop()
+
+    def _bind_receivers(self, receivers: list[Receiver]) -> None:
+        """Re-resolve the follower devices against freshly opened receivers;
+        called by the `ReceiverManager` after a receiver was rediscovered
+        post-replug. Raises `DeviceNotFound` (making the manager retry)
+        while a follower's receiver is still missing.
+        """
+        devices = resolve_devices(receivers, self.follower_ids)
+        self.follower_devices = [devices[i] for i in self.follower_ids]
+        self.local_receivers = receivers
+        self.reconciler.set_devices(self.follower_devices)
+        self._publish_status()
 
     def start_background_threads(self) -> None:
-        """Start the reconciler, notification listeners, and the /events
-        consumer.
+        """Start the reconciler, the receiver manager (which in turn starts
+        the notification listeners), and the /events consumer.
 
         Deliberately not done inline in `handle()`: `callback()`/
         `_handle_event()`/`_consume_events()` may call
@@ -373,13 +396,7 @@ class FlowClient(LogitechFlowKvmCommand):
         `FlowTUIApp.on_mount` instead.
         """
         self.reconciler.start()
-
-        for receiver in self.local_receivers:
-            receiver.enable_connection_notifications()
-            listener = NotificationListener(
-                receiver.path, partial(self.callback, receiver)
-            )
-            listener.start()
+        self.manager.start()
 
         events_thread = threading.Thread(target=self._consume_events, daemon=True)
         events_thread.start()

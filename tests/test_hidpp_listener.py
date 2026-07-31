@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from logitech_flow_kvm.hidpp import listener as listener_module
@@ -45,6 +47,68 @@ def test_delivers_notifications_to_callback(scripted_io):
     assert not listener.is_alive()
     assert len(received) == 2
     assert all(notification.sub_id == 0x41 for notification in received)
+
+
+def test_on_disconnect_fires_when_the_receiver_vanishes(scripted_io):
+    scripted_io.reports = [CONNECT_REPORT]
+    disconnected = []
+
+    listener = NotificationListener(
+        "/dev/hidraw-test", lambda n: None, on_disconnect=lambda: disconnected.append(1)
+    )
+    listener.start()
+    listener.join(timeout=5)
+
+    assert disconnected == [1]
+
+
+def test_on_disconnect_fires_when_the_node_cannot_be_opened(monkeypatch):
+    class UnopenableIO:
+        def __init__(self, path):
+            raise OSError("no such device")
+
+    monkeypatch.setattr(listener_module, "HidRawIO", UnopenableIO)
+    disconnected = []
+
+    listener = NotificationListener(
+        "/dev/hidraw-test", lambda n: None, on_disconnect=lambda: disconnected.append(1)
+    )
+    listener.start()
+    listener.join(timeout=5)
+
+    assert disconnected == [1]
+
+
+def test_on_disconnect_does_not_fire_when_stopped(monkeypatch):
+    reading = threading.Event()
+
+    class IdleIO:
+        def __init__(self, path):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            pass
+
+        def read(self, timeout):
+            reading.set()
+            return None
+
+    monkeypatch.setattr(listener_module, "HidRawIO", IdleIO)
+    disconnected = []
+
+    listener = NotificationListener(
+        "/dev/hidraw-test", lambda n: None, on_disconnect=lambda: disconnected.append(1)
+    )
+    listener.start()
+    assert reading.wait(timeout=5)
+    listener.stop()
+    listener.join(timeout=5)
+
+    assert not listener.is_alive()
+    assert disconnected == []
 
 
 def test_callback_exception_does_not_kill_listener(scripted_io, caplog):

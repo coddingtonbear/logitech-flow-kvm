@@ -228,6 +228,53 @@ class TestReconcileOnceSurvivesFailures:
         reconciler.reconcile_once()  # must not raise despite no on_error given
 
 
+class TestSetDevices:
+    def test_swapped_in_devices_are_reconciled_after_observation(self, monkeypatch):
+        old_device = make_device(1)
+        new_device = make_device(2)
+        calls = []
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host",
+            lambda d, h: calls.append((d, h)),
+        )
+        reconciler = Reconciler(
+            [old_device], get_desired_host=lambda: 2, host_number=1
+        )
+        reconciler.observe(old_device, connected=True)
+
+        reconciler.set_devices([new_device])
+        reconciler.observe(new_device, connected=True)
+        reconciler.reconcile_once()
+
+        # Only the new device is reconciled; the old one is gone entirely.
+        assert calls == [(new_device, 2)]
+
+    def test_connection_state_resets_to_unobserved(self, monkeypatch):
+        device = make_device(1)
+        calls = []
+        monkeypatch.setattr(
+            "logitech_flow_kvm.reconciler.change_device_host",
+            lambda d, h: calls.append((d, h)),
+        )
+        reconciler = Reconciler([device], get_desired_host=lambda: 2, host_number=1)
+        reconciler.observe(device, connected=True)
+
+        # Even for the same device object, a swap means its old "connected"
+        # observation belonged to a receiver that no longer exists.
+        reconciler.set_devices([device])
+        reconciler.reconcile_once()
+
+        assert calls == []
+
+    def test_pokes_the_loop(self):
+        reconciler = Reconciler([], get_desired_host=lambda: None, host_number=1)
+        reconciler._wake.clear()
+
+        reconciler.set_devices([make_device(1)])
+
+        assert reconciler._wake.is_set()
+
+
 class TestObserve:
     def test_poke_wakes_a_waiting_run_loop(self):
         device = make_device()

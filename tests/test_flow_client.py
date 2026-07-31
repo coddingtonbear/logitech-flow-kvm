@@ -690,9 +690,10 @@ class TestPublishStatus:
 
 
 class TestStartBackgroundThreads:
-    def test_starts_the_reconciler_listeners_and_events_consumer(self, monkeypatch):
+    def test_starts_the_reconciler_manager_and_events_consumer(self, monkeypatch):
         reconciler = Mock()
-        client = make_client(reconciler=reconciler, local_receivers=[])
+        manager = Mock()
+        client = make_client(reconciler=reconciler, manager=manager)
         thread_targets: list[object] = []
 
         class FakeThread:
@@ -707,18 +708,38 @@ class TestStartBackgroundThreads:
         client.start_background_threads()
 
         reconciler.start.assert_called_once()
+        manager.start.assert_called_once()
         assert thread_targets == [client._consume_events]
 
-    def test_starts_a_listener_for_each_local_receiver(self, monkeypatch):
-        receiver = Mock()
-        client = make_client(reconciler=Mock(), local_receivers=[receiver])
-        listener_mock = Mock()
-        monkeypatch.setattr(
-            flow_client, "NotificationListener", Mock(return_value=listener_mock)
+
+class TestBindReceivers:
+    def test_swaps_in_rediscovered_devices(self):
+        reconciler = Mock()
+        client = make_client(
+            reconciler=reconciler,
+            follower_ids=["FOLLOW01"],
+            follower_devices=[],
+            local_receivers=[],
         )
-        monkeypatch.setattr(flow_client.threading, "Thread", Mock())
+        new_follower = Mock(serial="FOLLOW01", id="FOLLOW01")
+        receiver = Mock()
+        receiver.enumerate_devices.return_value = [new_follower]
 
-        client.start_background_threads()
+        client._bind_receivers([receiver])
 
-        receiver.enable_connection_notifications.assert_called_once()
-        listener_mock.start.assert_called_once()
+        assert client.follower_devices == [new_follower]
+        assert client.local_receivers == [receiver]
+        reconciler.set_devices.assert_called_once_with([new_follower])
+
+    def test_raises_while_a_follower_is_still_missing(self):
+        client = make_client(
+            reconciler=Mock(),
+            follower_ids=["FOLLOW01"],
+            follower_devices=[],
+            local_receivers=[],
+        )
+        receiver = Mock()
+        receiver.enumerate_devices.return_value = []
+
+        with pytest.raises(exceptions.DeviceNotFound):
+            client._bind_receivers([receiver])

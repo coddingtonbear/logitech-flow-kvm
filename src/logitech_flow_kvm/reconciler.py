@@ -57,6 +57,17 @@ class Reconciler(threading.Thread):
         self._connected[device] = connected
         self.poke()
 
+    def set_devices(self, devices: list[PairedDevice]) -> None:
+        """Replace the reconciled device set (e.g. after a receiver was
+        rediscovered post-replug and its `PairedDevice`s were rebuilt).
+
+        Connection state resets to unobserved; the receiver's re-announced
+        connection notifications repopulate it almost immediately.
+        """
+        self._connected = dict.fromkeys(devices, False)
+        self._devices = devices
+        self.poke()
+
     def poke(self) -> None:
         """Wake the loop immediately instead of waiting for the next tick."""
         self._wake.set()
@@ -76,7 +87,9 @@ class Reconciler(threading.Thread):
         if desired_host is None or desired_host == self._host_number:
             return
         for device in self._devices:
-            if not self._connected[device]:
+            # `.get`: `set_devices` may swap `_devices`/`_connected` from
+            # another thread between the two reads.
+            if not self._connected.get(device, False):
                 continue
             try:
                 change_device_host(device, desired_host)

@@ -11,6 +11,8 @@ from hidpp_fakes import register_matcher
 from logitech_flow_kvm.commands import flow_server
 from logitech_flow_kvm.commands.flow_server import FlowServerAPI
 from logitech_flow_kvm.commands.flow_server import bind_routes
+from logitech_flow_kvm.exceptions import DeviceNotFound
+from logitech_flow_kvm.hidpp.manager import ReceiverManager
 from logitech_flow_kvm.hidpp.models import Notification
 from logitech_flow_kvm.hidpp.models import ReceiverInfo
 from logitech_flow_kvm.hidpp.receiver import PairedDevice
@@ -70,23 +72,9 @@ def disconnect_notification(device: PairedDevice) -> Notification:
     )
 
 
-class DummyListener:
-    """Stands in for NotificationListener so `__init__` doesn't spawn real threads
-    trying to open fake hidraw paths."""
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def start(self):
-        pass
-
-    def stop(self):
-        pass
-
-
 @pytest.fixture(autouse=True)
 def no_background_threads(monkeypatch, tmp_path):
-    monkeypatch.setattr(flow_server, "NotificationListener", DummyListener)
+    monkeypatch.setattr(ReceiverManager, "start", lambda self: None)
     monkeypatch.setattr(Reconciler, "start", lambda self: None)
     monkeypatch.setattr(platformdirs, "user_data_dir", lambda *a, **k: str(tmp_path))
 
@@ -242,15 +230,38 @@ class TestBuildStatus:
 
 
 class TestStartBackgroundThreads:
-    def test_starts_the_reconciler_and_every_listener(self, app):
+    def test_starts_the_reconciler_and_the_receiver_manager(self, app):
         app.reconciler.start = Mock()
-        app.listeners = [Mock(), Mock()]
+        app.manager.start = Mock()
 
         app.start_background_threads()
 
         app.reconciler.start.assert_called_once()
-        for listener in app.listeners:
-            listener.start.assert_called_once()
+        app.manager.start.assert_called_once()
+
+
+class TestBindReceivers:
+    def test_swaps_in_rediscovered_devices(self, app):
+        new_leader = Mock(id="LEADER01")
+        new_follower = Mock(id="FOLLOW01")
+        receiver = Mock()
+        receiver.enumerate_devices.return_value = [new_leader, new_follower]
+
+        app._bind_receivers([receiver])
+
+        assert app.leader_device is new_leader
+        assert app.follower_devices == [new_follower]
+        # Connection state resets to unobserved for the new device objects.
+        assert app.reconciler._connected == {new_follower: False}
+        assert app._leader_connected is False
+
+    def test_raises_while_a_wanted_device_is_still_missing(self, app):
+        new_leader = Mock(id="LEADER01")
+        receiver = Mock()
+        receiver.enumerate_devices.return_value = [new_leader]
+
+        with pytest.raises(DeviceNotFound):
+            app._bind_receivers([receiver])
 
 
 def _auth_headers(app, name: str) -> dict[str, str]:

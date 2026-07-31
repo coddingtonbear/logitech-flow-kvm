@@ -5,6 +5,7 @@ from .exceptions import NoSuchDevice
 from .exceptions import ProtocolError
 from .exceptions import ReceiverNotFound
 from .listener import NotificationListener
+from .manager import ReceiverManager
 from .models import ChangeHostInfo
 from .models import Notification
 from .models import ReceiverInfo
@@ -22,6 +23,7 @@ __all__ = [
     "ProtocolError",
     "Receiver",
     "ReceiverInfo",
+    "ReceiverManager",
     "ReceiverNotFound",
     "find_receivers",
 ]

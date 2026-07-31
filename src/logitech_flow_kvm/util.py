@@ -88,6 +88,30 @@ def get_devices() -> Iterable[PairedDevice | None]:
             yield receiver.get_device(number)
 
 
+def resolve_devices(
+    receivers: Iterable[Receiver], device_ids: Iterable[str]
+) -> dict[str, PairedDevice]:
+    """Resolve each id in `device_ids` to a `PairedDevice` on `receivers`.
+
+    Used to (re)bind devices after receivers are (re)opened -- device ids
+    (serials) are the durable identity; receivers and their hidraw paths are
+    ephemeral across a USB replug. Raises `DeviceNotFound` for any id that
+    isn't paired to one of the given receivers.
+    """
+    wanted = set(device_ids)
+    found: dict[str, PairedDevice] = {}
+    for receiver in receivers:
+        for device in receiver.enumerate_devices():
+            if device.id in wanted:
+                found[device.id] = device
+
+    for device_id in wanted:
+        if device_id not in found:
+            raise DeviceNotFound(device_id)
+
+    return found
+
+
 def get_device_by_path(device_path: str) -> PairedDevice:
     if ":" not in device_path:
         raise DeviceNotFound(device_path)

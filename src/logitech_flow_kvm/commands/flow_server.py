@@ -6,7 +6,6 @@ import sys
 import threading
 import uuid
 from argparse import ArgumentParser
-from functools import partial
 
 import platformdirs
 import pyperclip
@@ -21,9 +20,9 @@ from rich.prompt import Prompt
 from .. import constants
 from .. import exceptions
 from ..hidpp import Notification
-from ..hidpp import NotificationListener
 from ..hidpp import PairedDevice
 from ..hidpp import Receiver
+from ..hidpp import ReceiverManager
 from ..reconciler import Reconciler
 from ..sse import EventBroadcaster
 from ..sse import format_sse
@@ -35,6 +34,7 @@ from ..util import get_certificate_key_path
 from ..util import get_devices
 from ..util import get_theoretical_max_device_count
 from ..util import parse_connection_status
+from ..util import resolve_devices
 from . import LogitechFlowKvmCommand
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class FlowServerAPI(Flask):
     port: int
     clipboard_enabled: bool
 
-    listeners: list[NotificationListener]
+    manager: ReceiverManager
     leader_device: PairedDevice
     follower_devices: list[PairedDevice]
     hostnames: list[str]
@@ -109,21 +109,22 @@ class FlowServerAPI(Flask):
             on_error=self._reconciler_error,
         )
 
-        # Listen to change events for all relevant devices, one listener per
-        # distinct receiver (leader and followers may share a receiver).
-        self.listeners = []
+        # The durable identity of the leader/followers across receiver
+        # replugs: `_bind_receivers` re-resolves these ids to fresh
+        # `PairedDevice`s whenever the manager rebuilds the receivers.
+        self._leader_id = leader_device.id
+        self._follower_ids = [device.id for device in follower_devices]
+
+        # Supervise the distinct receivers backing the relevant devices
+        # (leader and followers may share a receiver).
         seen_receivers: list[Receiver] = []
         for device in (self.leader_device, *self.follower_devices):
             if device.receiver in seen_receivers:
                 continue
             seen_receivers.append(device.receiver)
-            device.receiver.enable_connection_notifications()
-            device.receiver.notify_devices()
-            self.listeners.append(
-                NotificationListener(
-                    device.receiver.path, partial(self.callback, device.receiver)
-                )
-            )
+        self.manager = ReceiverManager(
+            seen_receivers, rebind=self._bind_receivers, callback=self.callback
+        )
 
         user_data_dir = platformdirs.user_data_dir(
             constants.APP_NAME, constants.APP_AUTHOR
@@ -138,16 +139,29 @@ class FlowServerAPI(Flask):
         super().__init__(*args, **kwargs)
 
     def start_background_threads(self) -> None:
-        """Start the reconciler and notification listeners.
+        """Start the reconciler and the receiver manager (which in turn
+        starts the notification listeners).
 
         Deliberately not done in `__init__`: `callback()`/`report_leader_host()`
         may call `self.tui.update_status(...)`, which requires the TUI's event
         loop to already be running -- so when interactive, this is called from
         `FlowTUIApp.on_mount` instead of right after construction.
         """
-        for listener in self.listeners:
-            listener.start()
+        self.manager.start()
         self.reconciler.start()
+
+    def _bind_receivers(self, receivers: list[Receiver]) -> None:
+        """Re-resolve the leader/follower devices against freshly opened
+        receivers; called by the `ReceiverManager` after a receiver was
+        rediscovered post-replug. Raises `DeviceNotFound` (making the
+        manager retry) while a wanted device's receiver is still missing.
+        """
+        devices = resolve_devices(receivers, [self._leader_id, *self._follower_ids])
+        self.leader_device = devices[self._leader_id]
+        self.follower_devices = [devices[i] for i in self._follower_ids]
+        self._leader_connected = False
+        self.reconciler.set_devices(self.follower_devices)
+        self._publish_status()
 
     def _get_desired_host(self) -> int | None:
         state = self.events.state
