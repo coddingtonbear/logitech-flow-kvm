@@ -4,6 +4,7 @@ import pytest
 
 from logitech_flow_kvm.hidpp import listener as listener_module
 from logitech_flow_kvm.hidpp.listener import NotificationListener
+from logitech_flow_kvm.hidpp.models import Notification
 
 
 class ScriptedHidRawIO:
@@ -38,7 +39,7 @@ def scripted_io(monkeypatch):
 
 def test_delivers_notifications_to_callback(scripted_io):
     scripted_io.reports = [CONNECT_REPORT, CONNECT_REPORT]
-    received = []
+    received: list[Notification] = []
 
     listener = NotificationListener("/dev/hidraw-test", received.append)
     listener.start()

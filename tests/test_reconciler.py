@@ -237,9 +237,7 @@ class TestSetDevices:
             "logitech_flow_kvm.reconciler.change_device_host",
             lambda d, h: calls.append((d, h)),
         )
-        reconciler = Reconciler(
-            [old_device], get_desired_host=lambda: 2, host_number=1
-        )
+        reconciler = Reconciler([old_device], get_desired_host=lambda: 2, host_number=1)
         reconciler.observe(old_device, connected=True)
 
         reconciler.set_devices([new_device])

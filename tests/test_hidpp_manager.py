@@ -56,9 +56,7 @@ def env(monkeypatch):
 
     monkeypatch.setattr(manager_module, "Receiver", FakeReceiver)
     monkeypatch.setattr(manager_module, "NotificationListener", FakeListener)
-    monkeypatch.setattr(
-        manager_module, "find_receivers", lambda: list(env.discovered)
-    )
+    monkeypatch.setattr(manager_module, "find_receivers", lambda: list(env.discovered))
     env.FakeReceiver = FakeReceiver
     return env
 
@@ -86,17 +84,13 @@ class TestActivation:
         wait_for(lambda: ("notify", "r0") in env.log)
         stop_and_join(manager)
 
-        assert env.log.index(("enable", "r0")) < env.log.index(
-            ("listener-start", "r0")
-        )
-        assert env.log.index(("listener-start", "r0")) < env.log.index(
-            ("notify", "r0")
-        )
+        assert env.log.index(("enable", "r0")) < env.log.index(("listener-start", "r0"))
+        assert env.log.index(("listener-start", "r0")) < env.log.index(("notify", "r0"))
 
 
 class TestRecovery:
     def test_rebuilds_and_rebinds_after_a_listener_disconnect(self, env):
-        rebinds = []
+        rebinds: list[list] = []
         manager = make_manager(env, [env.FakeReceiver("r0")], rebind=rebinds.append)
 
         manager.start()
@@ -141,7 +135,7 @@ class TestRecovery:
         assert env.log.count(("close", "r1")) >= 2
 
     def test_a_disconnect_during_recovery_triggers_another_recovery(self, env):
-        rebinds = []
+        rebinds: list[list] = []
         manager = make_manager(env, [env.FakeReceiver("r0")], rebind=rebinds.append)
 
         manager.start()
