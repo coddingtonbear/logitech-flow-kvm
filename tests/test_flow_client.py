@@ -148,6 +148,32 @@ class TestRequest:
 
         assert "Authorization" not in captured["kwargs"]["headers"]
 
+    def test_applies_a_default_timeout(self, monkeypatch):
+        client = make_client()
+        captured: dict[str, Any] = {}
+        monkeypatch.setattr(
+            flow_client.requests,
+            "request",
+            lambda method, url, **kw: captured.update(kwargs=kw) or FakeResponse(),
+        )
+
+        client.request("GET", "https://x")
+
+        assert captured["kwargs"]["timeout"] == flow_client.DEFAULT_HTTP_TIMEOUT
+
+    def test_does_not_override_an_explicit_timeout(self, monkeypatch):
+        client = make_client()
+        captured: dict[str, Any] = {}
+        monkeypatch.setattr(
+            flow_client.requests,
+            "request",
+            lambda method, url, **kw: captured.update(kwargs=kw) or FakeResponse(),
+        )
+
+        client.request("GET", "https://x", timeout=(1, 2))
+
+        assert captured["kwargs"]["timeout"] == (1, 2)
+
 
 class TestPair:
     def test_success_stores_certificate_and_token(self, monkeypatch):
@@ -193,6 +219,33 @@ class TestPair:
 
         with pytest.raises(exceptions.PairingFailed):
             client.pair()
+
+    def test_post_waits_long_enough_for_a_human_to_type_the_code(self, monkeypatch):
+        client = make_client()
+        responses = iter(
+            [
+                FakeResponse(ok=True),  # OPTIONS /pairing
+                FakeResponse(
+                    ok=True, json_data={"certificate": "PEM-DATA", "token": "abc123"}
+                ),  # POST /pairing
+            ]
+        )
+        captured: list[dict[str, Any]] = []
+
+        def fake_request(method, url, **kw):
+            captured.append(kw)
+            return next(responses)
+
+        monkeypatch.setattr(flow_client.requests, "request", fake_request)
+        monkeypatch.setattr(
+            flow_client, "set_host_certificate_and_token", lambda *a: None
+        )
+
+        client.pair()
+
+        post_kwargs = captured[1]
+        _, read_timeout = post_kwargs["timeout"]
+        assert read_timeout == flow_client.PAIRING_READ_TIMEOUT
 
 
 class TestGetCertificatePathAndToken:
@@ -453,6 +506,24 @@ class TestConsumeEvents:
 
         assert client.leader_host == 5
         fake_receiver.notify_devices.assert_called_once()
+
+    def test_stream_uses_a_read_timeout_that_outlives_keepalives(self, monkeypatch):
+        client = make_client(reconciler=Mock())
+        client._stop = threading.Event()
+        client.local_receivers = []
+        stream = FakeResponse(ok=True, lines=[])
+        request_mock = Mock(return_value=stream)
+        monkeypatch.setattr(client, "request", request_mock)
+        monkeypatch.setattr(flow_client.time, "sleep", lambda s: client._stop.set())
+
+        client._consume_events()
+
+        _, read_timeout = request_mock.call_args.kwargs["timeout"]
+        assert read_timeout == flow_client.EVENTS_READ_TIMEOUT
+        # A dead connection must be detected, not waited on forever: the
+        # server keepalives every 15s, so a healthy stream never idles
+        # this long.
+        assert read_timeout is not None
 
     def test_retries_with_growing_backoff_while_the_connection_stays_down(
         self, monkeypatch

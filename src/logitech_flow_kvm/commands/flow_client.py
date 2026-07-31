@@ -41,6 +41,23 @@ logger = logging.getLogger(__name__)
 EVENTS_MIN_BACKOFF = 1.0
 EVENTS_MAX_BACKOFF = 30.0
 
+# Default (connect, read) timeout for ordinary request/response calls.
+# Without one, `requests` waits forever -- so a network change that
+# black-holes an established connection would hang whichever thread made
+# the call (often the notification listener) until process restart.
+DEFAULT_HTTP_TIMEOUT = (5.0, 10.0)
+
+# The /events stream idles between events, but the server emits a keepalive
+# comment every 15s (`flow_server.KEEPALIVE_INTERVAL`), so a healthy
+# connection never goes this long without bytes. A read that does is a dead
+# connection; timing out hands control back to `_consume_events`'s
+# backoff/reconnect loop instead of blocking until TCP gives up.
+EVENTS_READ_TIMEOUT = 45.0
+
+# POST /pairing blocks until a human types the pairing code into the server
+# console; give them plenty of time.
+PAIRING_READ_TIMEOUT = 600.0
+
 
 class FlowClient(LogitechFlowKvmCommand):
     leader_id: str
@@ -168,7 +185,10 @@ class FlowClient(LogitechFlowKvmCommand):
         while not self._stop.is_set():
             try:
                 response = self.request(
-                    "GET", self.build_url("events"), stream=True, timeout=(10, None)
+                    "GET",
+                    self.build_url("events"),
+                    stream=True,
+                    timeout=(10, EVENTS_READ_TIMEOUT),
                 )
                 response.raise_for_status()
                 # Re-announce our own devices' current status as a side
@@ -205,6 +225,7 @@ class FlowClient(LogitechFlowKvmCommand):
     ) -> requests.Response:
         if "verify" not in kwargs:
             kwargs["verify"] = self.cert
+        kwargs.setdefault("timeout", DEFAULT_HTTP_TIMEOUT)
 
         headers = kwargs.pop("headers", {})
         if self.token and "Authorization" not in headers:
@@ -231,6 +252,7 @@ class FlowClient(LogitechFlowKvmCommand):
             "POST",
             self.build_url("pairing"),
             verify=False,
+            timeout=(DEFAULT_HTTP_TIMEOUT[0], PAIRING_READ_TIMEOUT),
             data=json.dumps(
                 {"name": self.options.host_number, "pairing_code": pairing_code}
             ),
