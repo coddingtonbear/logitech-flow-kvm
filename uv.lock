@@ -595,7 +595,7 @@ wheels = [
 
 [[package]]
 name = "logitech-flow-kvm"
-version = "1.2.0"
+version = "2.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "bitstruct" },
