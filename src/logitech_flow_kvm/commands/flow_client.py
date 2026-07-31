@@ -1,12 +1,14 @@
 import json
 import logging
 import os
+import queue
 import random
 import string
 import sys
 import threading
 import time
 from argparse import ArgumentParser
+from collections.abc import Callable
 from typing import Literal
 
 import pyperclip
@@ -80,6 +82,17 @@ class FlowClient(LogitechFlowKvmCommand):
     tui: FlowTUIApp | None = None
     _connected_to_server: bool = False
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Server requests triggered by device notifications are queued here
+        # and executed by a dedicated worker thread (`_run_http_tasks`), so
+        # a slow or unreachable server can never stall the notification
+        # listener -- the sole source of connect/disconnect events. A single
+        # worker (rather than a thread per request) preserves ordering, e.g.
+        # a clipboard push on leader-disconnect completes before the pull
+        # triggered by the next connect.
+        self._http_tasks: queue.Queue[Callable[[], None]] = queue.Queue()
+
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
         parser.add_argument("host_number", type=int)
@@ -116,35 +129,56 @@ class FlowClient(LogitechFlowKvmCommand):
 
         if connected:
             if is_leader:
-                # Positive evidence: the leader is here. Report it so every
-                # client (including this one) learns to converge followers
-                # toward this host.
-                response = self.request(
-                    "PUT",
-                    self.build_url("leader-host"),
-                    data=str(self.options.host_number),
-                )
-                response.raise_for_status()
-
+                self._http_tasks.put(self._report_leader_host_here)
             if self.clipboard_enabled:
-                clipboard_response = self.request("GET", self.build_url("clipboard"))
-                if clipboard_response.ok:
-                    pyperclip.copy(clipboard_response.text)
-        elif is_leader:
-            if self.clipboard_enabled:
-                clipboard_data = pyperclip.paste()
-                clipboard_response = self.request(
-                    "PUT",
-                    self.build_url("clipboard"),
-                    data=clipboard_data.encode("utf-8"),
-                )
-                if clipboard_response.ok:
-                    logger.info(
-                        "Clipboard contents set on server with %d bytes of data",
-                        len(clipboard_data),
-                    )
+                self._http_tasks.put(self._pull_clipboard)
+        elif is_leader and self.clipboard_enabled:
+            self._http_tasks.put(self._push_clipboard)
 
         self._publish_status()
+
+    def _report_leader_host_here(self) -> None:
+        """Positive evidence: the leader is here. Report it so every client
+        (including this one) learns to converge followers toward this host.
+        """
+        response = self.request(
+            "PUT",
+            self.build_url("leader-host"),
+            data=str(self.options.host_number),
+        )
+        response.raise_for_status()
+
+    def _pull_clipboard(self) -> None:
+        response = self.request("GET", self.build_url("clipboard"))
+        if response.ok:
+            pyperclip.copy(response.text)
+
+    def _push_clipboard(self) -> None:
+        clipboard_data = pyperclip.paste()
+        response = self.request(
+            "PUT",
+            self.build_url("clipboard"),
+            data=clipboard_data.encode("utf-8"),
+        )
+        if response.ok:
+            logger.info(
+                "Clipboard contents set on server with %d bytes of data",
+                len(clipboard_data),
+            )
+
+    def _run_http_tasks(self) -> None:
+        while not self._stop.is_set():
+            try:
+                task = self._http_tasks.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                task()
+            except Exception:
+                # A failed server request (network blip, server restart)
+                # must not kill this worker; the next notification or SSE
+                # reconnect re-announcement will get things back in sync.
+                logger.exception("Server request failed")
 
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
         logger.warning(
@@ -397,6 +431,9 @@ class FlowClient(LogitechFlowKvmCommand):
         """
         self.reconciler.start()
         self.manager.start()
+
+        http_thread = threading.Thread(target=self._run_http_tasks, daemon=True)
+        http_thread.start()
 
         events_thread = threading.Thread(target=self._consume_events, daemon=True)
         events_thread.start()

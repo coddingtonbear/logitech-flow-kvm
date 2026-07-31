@@ -1,4 +1,5 @@
 import argparse
+import queue
 import threading
 import types
 from typing import Any
@@ -68,6 +69,16 @@ def connection_notification(devnumber: int, *, connected: bool) -> Notification:
     return Notification(
         report_id=0x10, devnumber=devnumber, sub_id=0x41, address=0, data=data
     )
+
+
+def run_queued_http_tasks(client: FlowClient) -> None:
+    """Synchronously run whatever `callback` queued for the HTTP worker."""
+    while True:
+        try:
+            task = client._http_tasks.get_nowait()
+        except queue.Empty:
+            return
+        task()
 
 
 class TestBuildUrl:
@@ -354,6 +365,11 @@ class TestCallback:
         )
 
         client.callback(receiver, connection_notification(1, connected=True))
+        # The callback itself makes no requests -- they're queued for the
+        # HTTP worker so the notification listener never blocks on network.
+        assert calls == []
+
+        run_queued_http_tasks(client)
 
         assert ("PUT", client.build_url("leader-host")) in calls
         assert ("GET", client.build_url("clipboard")) in calls
@@ -375,6 +391,7 @@ class TestCallback:
         monkeypatch.setattr(client, "request", fake_request)
 
         client.callback(receiver, connection_notification(1, connected=False))
+        run_queued_http_tasks(client)
 
         assert sent["method"] == "PUT"
         assert sent["url"] == client.build_url("clipboard")
@@ -398,6 +415,7 @@ class TestCallback:
         monkeypatch.setattr(flow_client.pyperclip, "copy", copy_mock)
 
         client.callback(receiver, connection_notification(1, connected=True))
+        run_queued_http_tasks(client)
 
         assert ("PUT", client.build_url("leader-host")) in calls
         assert ("GET", client.build_url("clipboard")) not in calls
@@ -416,6 +434,7 @@ class TestCallback:
         monkeypatch.setattr(client, "request", request_mock)
 
         client.callback(receiver, connection_notification(1, connected=False))
+        run_queued_http_tasks(client)
 
         paste_mock.assert_not_called()
         request_mock.assert_not_called()
@@ -432,6 +451,7 @@ class TestCallback:
         monkeypatch.setattr(flow_client.pyperclip, "copy", lambda text: None)
 
         client.callback(receiver, connection_notification(2, connected=True))
+        run_queued_http_tasks(client)
 
         reconciler.observe.assert_called_once_with(device, True)
 
@@ -466,6 +486,35 @@ class TestCallback:
         client.callback(receiver, connection_notification(9, connected=True))
 
         reconciler.observe.assert_not_called()
+
+
+class TestRunHttpTasks:
+    def test_a_failing_task_does_not_stop_later_tasks(self):
+        client = make_client()
+        client._stop = threading.Event()
+        ran = []
+
+        def failing():
+            ran.append("failing")
+            raise RuntimeError("network blip")
+
+        def succeeding():
+            ran.append("succeeding")
+            client._stop.set()
+
+        client._http_tasks.put(failing)
+        client._http_tasks.put(succeeding)
+
+        client._run_http_tasks()
+
+        assert ran == ["failing", "succeeding"]
+
+    def test_exits_promptly_once_stopped(self):
+        client = make_client()
+        client._stop = threading.Event()
+        client._stop.set()
+
+        client._run_http_tasks()  # must return without blocking
 
 
 class TestHandleEvent:
@@ -709,7 +758,7 @@ class TestStartBackgroundThreads:
 
         reconciler.start.assert_called_once()
         manager.start.assert_called_once()
-        assert thread_targets == [client._consume_events]
+        assert thread_targets == [client._run_http_tasks, client._consume_events]
 
 
 class TestBindReceivers:
