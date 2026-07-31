@@ -1,9 +1,12 @@
+import logging
 import threading
 from collections.abc import Callable
 
 from .models import Notification
 from .protocol import make_notification
 from .transport import HidRawIO
+
+logger = logging.getLogger(__name__)
 
 # How long each read blocks before checking whether the thread should stop.
 READ_POLL_INTERVAL = 1.0
@@ -39,7 +42,17 @@ class NotificationListener(threading.Thread):
                     report_id, devnumber, data = reply
                     notification = make_notification(report_id, devnumber, data)
                     if notification is not None:
-                        self._callback(notification)
+                        try:
+                            self._callback(notification)
+                        except Exception:
+                            # A callback failure (e.g. a network hiccup while
+                            # reporting a connect event upstream) must never
+                            # kill this thread: it is the only source of
+                            # connect/disconnect events, and nothing restarts
+                            # it. Log and keep listening.
+                            logger.exception(
+                                "Notification callback failed; continuing to listen"
+                            )
         finally:
             self._active.clear()
 
