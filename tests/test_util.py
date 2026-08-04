@@ -2,6 +2,7 @@ import datetime
 import ipaddress
 import json
 import os
+import struct
 
 import platformdirs
 import pytest
@@ -9,8 +10,22 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
+from hidpp_fakes import ScriptedTransport
 from logitech_flow_kvm import util
+from logitech_flow_kvm.exceptions import CannotChangeHost
 from logitech_flow_kvm.exceptions import NoCertificateAvailable
+from logitech_flow_kvm.hidpp.exceptions import ERROR_INVALID_SUBID
+from logitech_flow_kvm.hidpp.exceptions import ERROR_RESOURCE_ERROR
+from logitech_flow_kvm.hidpp.exceptions import ERROR_UNKNOWN_DEVICE
+from logitech_flow_kvm.hidpp.exceptions import DeviceUnreachable
+from logitech_flow_kvm.hidpp.exceptions import ProtocolError
+from logitech_flow_kvm.hidpp.models import ReceiverInfo
+from logitech_flow_kvm.hidpp.receiver import PairedDevice
+from logitech_flow_kvm.hidpp.receiver import Receiver
+
+BOLT_INFO = ReceiverInfo(
+    path="/dev/hidraw4", product_id=0xC548, kind="bolt", interface=2
+)
 
 
 @pytest.fixture
@@ -208,3 +223,97 @@ class TestGetCertificateKeyPath:
         )
         with open(second_path, "rb") as inf:
             assert inf.read() == first_contents
+
+
+class TestChangeDeviceHost:
+    """`change_device_host` has to tell two very different failures apart:
+    a device that *answered* but can't be switched, and a device the receiver
+    holds no link to at all. Only the latter says anything about where the
+    device is, and `reconciler.Reconciler` acts on that distinction."""
+
+    @staticmethod
+    def _device(respond) -> tuple[PairedDevice, ScriptedTransport]:
+        transport = ScriptedTransport(respond=respond)
+        device = PairedDevice(
+            receiver=Receiver(BOLT_INFO, transport=transport),
+            number=1,
+            wpid="0000",
+            kind="mouse",
+            serial="F262458A",
+            codename=None,
+        )
+        return device, transport
+
+    def test_switches_a_reachable_device(self):
+        def respond(devnumber, payload, long_message):
+            if payload[2:] == struct.pack("!H", 0x1814):  # root: locate 0x1814
+                return payload[:2] + bytes([0x08, 0x00, 0x04])
+            return payload[:2] + bytes([0x03, 0x00])  # 3 hosts, currently on #1
+
+        device, transport = self._device(respond)
+
+        util.change_device_host(device, 2)
+
+        # The last write is setCurrentHost with the 0-indexed host on the wire.
+        devnumber, payload, _ = transport.writes[-1]
+        assert devnumber == 1
+        assert payload[2:3] == bytes([1])
+
+    def test_resource_error_is_reported_as_unreachable(self):
+        # 0x09 (resource error) is what a receiver answers with once the
+        # device has switched to another host -- exactly the case that used to
+        # be retried, loudly, forever.
+        def respond(devnumber, payload, long_message):
+            return b"\x8f" + payload[:2] + bytes([ERROR_RESOURCE_ERROR])
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(DeviceUnreachable) as caught:
+            util.change_device_host(device, 2)
+
+        assert caught.value.device_id == "F262458A"
+
+    def test_unknown_device_error_is_reported_as_unreachable(self):
+        def respond(devnumber, payload, long_message):
+            return b"\x8f" + payload[:2] + bytes([ERROR_UNKNOWN_DEVICE])
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(DeviceUnreachable):
+            util.change_device_host(device, 2)
+
+    def test_other_protocol_errors_are_not_mistaken_for_absence(self):
+        # An invalid-subid error means the request was wrong, not that the
+        # device is elsewhere; misreading it as absence would stop us driving
+        # a device that is sitting right here.
+        def respond(devnumber, payload, long_message):
+            return b"\x8f" + payload[:2] + bytes([ERROR_INVALID_SUBID])
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(ProtocolError):
+            util.change_device_host(device, 2)
+
+    def test_a_device_without_host_switching_raises_cannot_change_host(self):
+        # Feature index 0 means "I don't implement 0x1814". This is the same
+        # branch a silent device (asleep, mid-roam) lands in -- deliberately
+        # kept as retry-and-warn, since neither is evidence about *where* the
+        # device is, the way an unreachable error is.
+        def respond(devnumber, payload, long_message):
+            return payload[:2] + bytes([0x00, 0x00, 0x00])
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(CannotChangeHost):
+            util.change_device_host(device, 2)
+
+    def test_a_host_outside_the_devices_range_raises_cannot_change_host(self):
+        def respond(devnumber, payload, long_message):
+            if payload[2:] == struct.pack("!H", 0x1814):
+                return payload[:2] + bytes([0x08, 0x00, 0x04])
+            return payload[:2] + bytes([0x02, 0x00])  # only 2 hosts
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(CannotChangeHost):
+            util.change_device_host(device, 3)

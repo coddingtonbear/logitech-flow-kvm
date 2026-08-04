@@ -21,7 +21,9 @@ from . import constants
 from .exceptions import CannotChangeHost
 from .exceptions import DeviceNotFound
 from .exceptions import NoCertificateAvailable
+from .hidpp import DeviceUnreachable
 from .hidpp import PairedDevice
+from .hidpp import ProtocolError
 from .hidpp import Receiver
 from .hidpp import find_receivers
 
@@ -148,8 +150,24 @@ def parse_connection_status(data: bytes) -> DeviceStatus:
 
 
 def change_device_host(device: PairedDevice, host: int) -> None:
-    """Switch `device` to `host`. `host` is 1-indexed, matching the CLI and README."""
-    info = device.receiver.get_change_host_info(device.number)
+    """Switch `device` to `host`. `host` is 1-indexed, matching the CLI and README.
+
+    :raises DeviceUnreachable: the receiver holds no radio link to the device
+        -- it is asleep, out of range, or already on another host. Kept
+        distinct from `CannotChangeHost` because it is *evidence about where
+        the device is*, which callers driving a device toward a host (see
+        `reconciler.Reconciler`) need to act on rather than retry blindly.
+    :raises CannotChangeHost: the device answered, but the switch could not be
+        made -- it does not implement host switching, or `host` is outside the
+        range of hosts it knows about.
+    """
+    try:
+        info = device.receiver.get_change_host_info(device.number)
+    except ProtocolError as error:
+        if error.means_unreachable:
+            raise DeviceUnreachable(device.id) from error
+        raise
+
     if info is None or not 1 <= host <= info.num_hosts:
         raise CannotChangeHost(device.id)
 
