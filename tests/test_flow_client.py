@@ -792,3 +792,101 @@ class TestBindReceivers:
 
         with pytest.raises(exceptions.DeviceNotFound):
             client._bind_receivers([receiver])
+
+
+class TestCallbackFollowerMatching:
+    """Regression coverage for the stuck-forever reconciler: follower
+    notifications used to be resolved by re-reading the pairing registers
+    (`receiver.get_device`), so a read that failed or came back with a
+    differing codename/serial produced a `PairedDevice` that wasn't the key
+    `Reconciler` stores connection state under -- and the observation was
+    silently dropped. Losing a disconnect that way left the reconciler
+    driving a device that had already left, forever."""
+
+    def test_a_follower_is_matched_without_re_reading_the_device(self):
+        reconciler = Mock()
+        receiver = Mock()
+        follower = Mock(id="FOLLOW01", receiver=receiver, number=2)
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, follower_devices=[follower]
+        )
+        receiver.get_device = Mock(side_effect=AssertionError("should not be re-read"))
+
+        client.callback(receiver, connection_notification(2, connected=False))
+
+        reconciler.observe.assert_called_once_with(follower, False)
+        receiver.get_device.assert_not_called()
+
+    def test_a_follower_is_observed_even_when_the_registers_stop_answering(self):
+        # `get_device` returning None used to drop the notification entirely.
+        reconciler = Mock()
+        receiver = Mock()
+        receiver.get_device.return_value = None
+        follower = Mock(id="FOLLOW01", receiver=receiver, number=2)
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, follower_devices=[follower]
+        )
+
+        client.callback(receiver, connection_notification(2, connected=False))
+
+        reconciler.observe.assert_called_once_with(follower, False)
+
+    def test_the_exact_object_the_reconciler_keys_on_is_observed(self):
+        # The follower the reconciler was constructed with, not a value-equal
+        # rebuild of it -- that distinction is the whole bug.
+        reconciler = Mock()
+        receiver = Mock()
+        follower = Mock(id="FOLLOW01", receiver=receiver, number=2)
+        receiver.get_device.return_value = Mock(id="FOLLOW01")
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, follower_devices=[follower]
+        )
+
+        client.callback(receiver, connection_notification(2, connected=True))
+
+        observed_device, _ = reconciler.observe.call_args.args
+        assert observed_device is follower
+
+    def test_a_follower_on_another_receiver_is_not_matched(self):
+        reconciler = Mock()
+        receiver = Mock()
+        other_receiver = Mock()
+        follower = Mock(id="FOLLOW01", receiver=other_receiver, number=2)
+        rebuilt = Mock(id="OTHER01")
+        receiver.get_device.return_value = rebuilt
+        client = make_client(
+            leader_id="LEADER01", reconciler=reconciler, follower_devices=[follower]
+        )
+
+        client.callback(receiver, connection_notification(2, connected=True))
+
+        reconciler.observe.assert_called_once_with(rebuilt, True)
+
+    def test_the_leader_is_still_identified_by_a_live_lookup(self):
+        # The client never resolves the leader up front, so that path stays.
+        reconciler = Mock()
+        receiver = Mock()
+        receiver.get_device.return_value = types.SimpleNamespace(id="LEADER01")
+        client = make_client(
+            leader_id="LEADER01",
+            reconciler=reconciler,
+            clipboard_enabled=False,
+            follower_devices=[Mock(id="FOLLOW01", receiver=receiver, number=2)],
+        )
+
+        client.callback(receiver, connection_notification(1, connected=True))
+        queued = []
+        while True:
+            try:
+                queued.append(client._http_tasks.get_nowait())
+            except queue.Empty:
+                break
+
+        assert queued == [client._report_leader_host_here]
+        reconciler.observe.assert_not_called()
+
+    def test_follower_devices_default_to_empty_before_resolution(self):
+        # `callback` can fire before `handle()` has resolved anything.
+        client = make_client()
+
+        assert client.follower_devices == []

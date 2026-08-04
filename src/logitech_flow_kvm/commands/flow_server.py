@@ -107,6 +107,7 @@ class FlowServerAPI(Flask):
             get_desired_host=self._get_desired_host,
             host_number=host_number,
             on_error=self._reconciler_error,
+            on_observation=self._reconciler_observation,
         )
 
         # The durable identity of the leader/followers across receiver
@@ -283,6 +284,21 @@ class FlowServerAPI(Flask):
             device.id,
             error,
         )
+
+    def _reconciler_observation(self, device: PairedDevice, connected: bool) -> None:
+        """The reconciler worked out a device's whereabouts by itself, rather
+        than being told by a notification -- keep the log and UI honest."""
+        if connected:
+            logger.info(
+                "Device %s answered here after all; resuming switching", device.id
+            )
+        else:
+            logger.info(
+                "Device %s is no longer on this host; will resume switching it "
+                "if it returns",
+                device.id,
+            )
+        self._publish_status()
 
 
 def bind_routes(app: FlowServerAPI) -> None:

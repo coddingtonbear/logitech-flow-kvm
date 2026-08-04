@@ -92,6 +92,9 @@ class FlowClient(LogitechFlowKvmCommand):
         # a clipboard push on leader-disconnect completes before the pull
         # triggered by the next connect.
         self._http_tasks: queue.Queue[Callable[[], None]] = queue.Queue()
+        # Populated by `handle()`; empty until then so notification handling
+        # is well-defined even before devices have been resolved.
+        self.follower_devices = []
 
     @classmethod
     def add_arguments(cls, parser: ArgumentParser) -> None:
@@ -107,11 +110,30 @@ class FlowClient(LogitechFlowKvmCommand):
             ),
         )
 
+    def _find_follower(self, receiver: Receiver, devnumber: int) -> PairedDevice | None:
+        """Match an incoming notification to an already-resolved follower."""
+        for device in self.follower_devices:
+            if device.receiver is receiver and device.number == devnumber:
+                return device
+        return None
+
     def callback(self, receiver: Receiver, notification: Notification) -> None:
         if notification.sub_id != 0x41:
             return
 
-        device = receiver.get_device(notification.devnumber)
+        # Followers are matched against the devices resolved at startup rather
+        # than rebuilt with `receiver.get_device()`, which re-reads the pairing
+        # registers live. Those reads can fail outright -- dropping the
+        # notification -- or come back with a differing codename/serial, and
+        # since `PairedDevice` is a frozen dataclass compared by value, the
+        # result is then not the key `Reconciler` stores connection state
+        # under, so `observe()` silently discards the observation. A single
+        # disconnect lost that way leaves the reconciler driving a device that
+        # has already left, forever. The live lookup remains for the leader,
+        # which (unlike on the server) the client never resolves up front.
+        device = self._find_follower(receiver, notification.devnumber)
+        if device is None:
+            device = receiver.get_device(notification.devnumber)
         if device is None:
             return
 
@@ -186,6 +208,21 @@ class FlowClient(LogitechFlowKvmCommand):
             device.id,
             error,
         )
+
+    def _reconciler_observation(self, device: PairedDevice, connected: bool) -> None:
+        """The reconciler worked out a device's whereabouts by itself, rather
+        than being told by a notification -- keep the log and UI honest."""
+        if connected:
+            logger.info(
+                "Device %s answered here after all; resuming switching", device.id
+            )
+        else:
+            logger.info(
+                "Device %s is no longer on this host; will resume switching it "
+                "if it returns",
+                device.id,
+            )
+        self._publish_status()
 
     def _handle_event(self, event_type: str, data: str) -> None:
         if event_type == "leader-host":
@@ -370,6 +407,7 @@ class FlowClient(LogitechFlowKvmCommand):
             get_desired_host=lambda: self.leader_host,
             host_number=self.options.host_number,
             on_error=self._reconciler_error,
+            on_observation=self._reconciler_observation,
         )
         self.manager = ReceiverManager(
             self.local_receivers, rebind=self._bind_receivers, callback=self.callback

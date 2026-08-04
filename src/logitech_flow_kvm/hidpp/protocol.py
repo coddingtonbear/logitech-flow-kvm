@@ -4,15 +4,14 @@ import threading
 import time
 from typing import Protocol
 
+from .exceptions import ERROR_INVALID_SUBID
+from .exceptions import ERROR_RESOURCE_ERROR
+from .exceptions import ERROR_UNKNOWN_DEVICE
 from .exceptions import ProtocolError
 from .models import Notification
 
 RECEIVER_DEVNUMBER = 0xFF
 ROOT_FEATURE_INDEX = 0x00
-
-_ERROR_INVALID_SUBID = 0x01
-_ERROR_UNKNOWN_DEVICE = 0x08
-_ERROR_RESOURCE_ERROR = 0x09
 
 DEFAULT_TIMEOUT = 2.0
 
@@ -180,9 +179,9 @@ class HidppConnection:
 
                 if reply_data[:1] == b"\x8f" and reply_data[1:3] == request_header:
                     error = reply_data[3]
-                    if error == _ERROR_INVALID_SUBID:  # a valid HID++1.0 device replied
+                    if error == ERROR_INVALID_SUBID:  # a valid HID++1.0 device replied
                         return 1.0
-                    if error in (_ERROR_RESOURCE_ERROR, _ERROR_UNKNOWN_DEVICE):
+                    if error in (ERROR_RESOURCE_ERROR, ERROR_UNKNOWN_DEVICE):
                         return None
 
     def get_feature_index(self, devnumber: int, feature_id: int) -> int | None:
