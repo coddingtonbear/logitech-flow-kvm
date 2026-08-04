@@ -5,8 +5,7 @@ import time
 from typing import Protocol
 
 from .exceptions import ERROR_INVALID_SUBID
-from .exceptions import ERROR_RESOURCE_ERROR
-from .exceptions import ERROR_UNKNOWN_DEVICE
+from .exceptions import UNREACHABLE_ERRORS
 from .exceptions import ProtocolError
 from .models import Notification
 
@@ -181,7 +180,11 @@ class HidppConnection:
                     error = reply_data[3]
                     if error == ERROR_INVALID_SUBID:  # a valid HID++1.0 device replied
                         return 1.0
-                    if error in (ERROR_RESOURCE_ERROR, ERROR_UNKNOWN_DEVICE):
+                    if error in UNREACHABLE_ERRORS:
+                        # Answering immediately rather than waiting out the
+                        # timeout matters: `reconciler.Reconciler` pings
+                        # devices it believes absent, and those are exactly
+                        # the pings that land here.
                         return None
 
     def get_feature_index(self, devnumber: int, feature_id: int) -> int | None:

@@ -14,6 +14,7 @@ from hidpp_fakes import ScriptedTransport
 from logitech_flow_kvm import util
 from logitech_flow_kvm.exceptions import CannotChangeHost
 from logitech_flow_kvm.exceptions import NoCertificateAvailable
+from logitech_flow_kvm.hidpp.exceptions import ERROR_CONNECTION_REQUEST_FAILED
 from logitech_flow_kvm.hidpp.exceptions import ERROR_INVALID_SUBID
 from logitech_flow_kvm.hidpp.exceptions import ERROR_RESOURCE_ERROR
 from logitech_flow_kvm.hidpp.exceptions import ERROR_UNKNOWN_DEVICE
@@ -272,6 +273,20 @@ class TestChangeDeviceHost:
             util.change_device_host(device, 2)
 
         assert caught.value.device_id == "F262458A"
+
+    def test_connection_request_failed_is_reported_as_unreachable(self):
+        # 0x04 is what a *Bolt* receiver answers where a Unifying one answers
+        # 0x09, for the identical condition -- observed on real hardware with
+        # an MX Keys Mini (Bolt) and an MX Anywhere 2S (Unifying) both away and
+        # both pinging as unreachable. Recognising only 0x09 would leave every
+        # Bolt-paired follower being driven at forever.
+        def respond(devnumber, payload, long_message):
+            return b"\x8f" + payload[:2] + bytes([ERROR_CONNECTION_REQUEST_FAILED])
+
+        device, _ = self._device(respond)
+
+        with pytest.raises(DeviceUnreachable):
+            util.change_device_host(device, 2)
 
     def test_unknown_device_error_is_reported_as_unreachable(self):
         def respond(devnumber, payload, long_message):

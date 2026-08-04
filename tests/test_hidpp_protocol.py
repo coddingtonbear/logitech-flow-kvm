@@ -1,4 +1,5 @@
 import struct
+import time
 
 import pytest
 
@@ -133,6 +134,23 @@ class TestPing:
         conn = HidppConnection(transport)
 
         assert conn.ping(1, timeout=SHORT_TIMEOUT) is None
+
+    def test_connection_request_failed_means_unreachable(self):
+        # A Bolt receiver reports an absent device with 0x04 rather than 0x09.
+        # Getting this wrong doesn't give a wrong answer -- the loop below
+        # would still fall through to the timeout -- but it burns the whole
+        # timeout doing it, on exactly the pings the reconciler's probe makes.
+        def respond(devnumber, payload, long_message):
+            return b"\x8f" + payload[:2] + bytes([0x04])
+
+        transport = ScriptedTransport(respond=respond)
+        conn = HidppConnection(transport)
+
+        # A generous timeout, so "returned immediately" and "waited it out"
+        # are unambiguously far apart.
+        started = time.monotonic()
+        assert conn.ping(1, timeout=1.0) is None
+        assert time.monotonic() - started < 0.5
 
     def test_invalid_subid_means_hidpp1_device(self):
         def respond(devnumber, payload, long_message):

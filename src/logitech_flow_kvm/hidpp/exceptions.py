@@ -1,14 +1,28 @@
 # HID++1.0 error codes, as returned in a 0x8F error reply. See section 3.4 of
 # the Unifying receiver specification (and solaar's `hidpp10.ERROR`).
 ERROR_INVALID_SUBID = 0x01
+ERROR_CONNECTION_REQUEST_FAILED = 0x04
 ERROR_UNKNOWN_DEVICE = 0x08
 ERROR_RESOURCE_ERROR = 0x09
 
-# The two errors a receiver answers with on a device's behalf when it holds no
-# radio link to that device -- it's asleep, out of range, or (the case this
-# project cares about) has switched to another host. Unlike the rest, these say
-# nothing about whether the request itself was valid.
-UNREACHABLE_ERRORS = frozenset({ERROR_UNKNOWN_DEVICE, ERROR_RESOURCE_ERROR})
+# The errors a receiver answers with on a device's behalf when it holds no radio
+# link to that device -- it's asleep, out of range, or (the case this project
+# cares about) has switched to another host. Unlike the rest, these say nothing
+# about whether the request itself was valid.
+#
+# Which code you get depends on the receiver family, not on the device or the
+# condition. Observed directly, with both devices away and both pinging as
+# unreachable: a Bolt receiver (0xC548, MX Keys Mini) answers 0x04 on every
+# attempt, while a Unifying receiver (0xC52B, MX Anywhere 2S) answers 0x09 for
+# the identical situation. Recognising only one family's code would leave the
+# other's devices being driven at forever.
+UNREACHABLE_ERRORS = frozenset(
+    {
+        ERROR_CONNECTION_REQUEST_FAILED,
+        ERROR_UNKNOWN_DEVICE,
+        ERROR_RESOURCE_ERROR,
+    }
+)
 
 
 class HidppError(Exception):
