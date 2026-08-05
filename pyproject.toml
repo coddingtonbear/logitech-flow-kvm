@@ -42,6 +42,7 @@ dependencies = [
 ]
 
 [project.urls]
+Homepage = "https://coddingtonbear.github.io/logitech-flow-kvm/"
 Repository = "https://github.com/coddingtonbear/logitech-flow-kvm"
 Issues = "https://github.com/coddingtonbear/logitech-flow-kvm/issues"
 

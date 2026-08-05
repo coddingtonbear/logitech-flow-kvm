@@ -11,6 +11,8 @@ It works by watching one of your attached Logitech devices (typically your keybo
 
 Its HID++ implementation builds on the protocol knowledge documented by the [Solaar](https://github.com/pwr-Solaar/Solaar) project, but where Solaar is a general device manager, this tool focuses specifically on Flow-style host switching.
 
+If you'd rather see what it does before reading how to set it up, there's a project page at **<https://coddingtonbear.github.io/logitech-flow-kvm/>**.
+
 ## Contents
 
 - [Features](#features)
