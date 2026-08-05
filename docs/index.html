@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>logitech-flow-kvm — one key, every device follows</title>
+<meta name="description" content="Logitech Flow-style host switching for Linux. Press host 2 on your keyboard and your mouse and clipboard follow.">
+<style>
+/* ── Faces ────────────────────────────────────────────────────────────────
+   Barlow Condensed — equipment labelling, the voice of the hardware.
+   Cabin — humanist body, quiet next to the condensed display.
+   Iosevka — narrow mono, for the things the machine says: IDs, commands. */
+@font-face{font-family:"Barlow Cond";src:url(assets/fonts/barlowcond-600.woff2) format("woff2");font-weight:600;font-display:swap}
+@font-face{font-family:"Barlow Cond";src:url(assets/fonts/barlowcond-700.woff2) format("woff2");font-weight:700;font-display:swap}
+@font-face{font-family:"Cabin";src:url(assets/fonts/cabin-var.woff2) format("woff2");font-weight:400 700;font-display:swap}
+@font-face{font-family:"Iosevka";src:url(assets/fonts/iosevka-400.woff2) format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Iosevka";src:url(assets/fonts/iosevka-500.woff2) format("woff2");font-weight:500;font-display:swap}
+@font-face{font-family:"Iosevka";src:url(assets/fonts/iosevka-700.woff2) format("woff2");font-weight:700;font-display:swap}
+
+/* ── Tokens ─────────────────────────────────────────────────────────────── */
+:root{
+  --ground:#131417; --ground-2:#191b20; --panel:#1e2127; --panel-2:#262a31;
+  --line:#33373f; --line-soft:#282c33;
+  --text:#d6d9df; --dim:#8b909c; --bright:#f2f4f7;
+  --amber:#e5a13c; --amber-ink:#e5a13c; --amber-soft:rgba(229,161,60,.13);
+  --green:#79d45f; --green-ink:#79d45f;
+  --led-off:#3a3f47; --shadow:0 24px 60px -20px rgba(0,0,0,.75);
+  --photo-fade:#131417;
+  --display:"Barlow Cond",Impact,"Haettenschweiler","Arial Narrow",sans-serif;
+  --body:"Cabin","Segoe UI",system-ui,sans-serif;
+  --mono:"Iosevka","DejaVu Sans Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:light){
+  :root{
+    --ground:#e9ebef; --ground-2:#e1e4e9; --panel:#f8f9fb; --panel-2:#eef0f4;
+    --line:#c8cdd6; --line-soft:#dde1e7;
+    --text:#1d2027; --dim:#5e6572; --bright:#0e1014;
+    --amber:#e5a13c; --amber-ink:#8f5c07; --amber-soft:rgba(229,161,60,.18);
+    --green:#4a9c33; --green-ink:#2f6c1f;
+    --led-off:#c2c8d1; --shadow:0 20px 44px -22px rgba(20,26,38,.4);
+    --photo-fade:#e9ebef;
+  }
+}
+:root[data-theme="light"]{
+  --ground:#e9ebef; --ground-2:#e1e4e9; --panel:#f8f9fb; --panel-2:#eef0f4;
+  --line:#c8cdd6; --line-soft:#dde1e7;
+  --text:#1d2027; --dim:#5e6572; --bright:#0e1014;
+  --amber:#e5a13c; --amber-ink:#8f5c07; --amber-soft:rgba(229,161,60,.18);
+  --green:#4a9c33; --green-ink:#2f6c1f;
+  --led-off:#c2c8d1; --shadow:0 20px 44px -22px rgba(20,26,38,.4);
+  --photo-fade:#e9ebef;
+}
+:root[data-theme="dark"]{
+  --ground:#131417; --ground-2:#191b20; --panel:#1e2127; --panel-2:#262a31;
+  --line:#33373f; --line-soft:#282c33;
+  --text:#d6d9df; --dim:#8b909c; --bright:#f2f4f7;
+  --amber:#e5a13c; --amber-ink:#e5a13c; --amber-soft:rgba(229,161,60,.13);
+  --green:#79d45f; --green-ink:#79d45f;
+  --led-off:#3a3f47; --shadow:0 24px 60px -20px rgba(0,0,0,.75);
+  --photo-fade:#131417;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--text);
+  font-family:var(--body); font-size:17px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit}
+.wrap{width:min(1120px,calc(100% - 3rem));margin-inline:auto}
+.eyebrow{
+  font-family:var(--display); font-weight:600; font-size:.8125rem;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--amber-ink);
+}
+h1,h2,h3{font-family:var(--display);font-weight:700;text-wrap:balance;margin:0}
+h1{font-size:clamp(3.1rem,8.5vw,6.75rem);line-height:.9;letter-spacing:-.015em;color:var(--bright)}
+h2{font-size:clamp(2.1rem,4.6vw,3.4rem);line-height:.98;letter-spacing:-.01em;color:var(--bright)}
+h3{font-size:1.4rem;line-height:1.15;font-weight:600;color:var(--bright)}
+p{margin:0}
+.lede{font-size:1.1875rem;color:var(--dim);max-width:56ch}
+/* nowrap so flags like --no-clipboard don't break across lines at the hyphen */
+code,kbd,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:2px}
+
+/* ── Nav ────────────────────────────────────────────────────────────────── */
+.nav{
+  position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--ground) 88%,transparent);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line-soft);
+}
+.nav-in{display:flex;align-items:center;gap:1.5rem;height:58px}
+.mark{font-family:var(--mono);font-weight:700;font-size:.9375rem;color:var(--bright);letter-spacing:-.02em;text-decoration:none}
+.mark span{color:var(--amber-ink)}
+.nav-links{margin-left:auto;display:flex;gap:1.5rem;font-family:var(--display);font-weight:600;font-size:1rem;letter-spacing:.02em}
+.nav-links a{color:var(--dim);text-decoration:none;transition:color .15s}
+.nav-links a:hover{color:var(--bright)}
+@media(max-width:620px){.nav-links a.opt{display:none}}
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero{padding:clamp(3.5rem,9vw,7rem) 0 0}
+.hero-grid{display:grid;gap:2.25rem}
+.hero h1{margin-block:1.1rem 1.5rem}
+.hero h1 em{font-style:normal;color:var(--amber-ink)}
+.cta-row{display:flex;flex-wrap:wrap;gap:.875rem;align-items:center;margin-top:2rem}
+.install{
+  display:inline-flex;align-items:center;gap:.75rem;border:1px solid var(--line);
+  background:var(--panel);border-radius:3px;padding:.6rem .6rem .6rem 1rem;
+  font-family:var(--mono);font-size:.9375rem;color:var(--bright);
+}
+.install .pip{color:var(--dim)}
+.copy{
+  font-family:var(--display);font-weight:600;font-size:.8125rem;letter-spacing:.1em;
+  text-transform:uppercase;border:0;border-radius:2px;padding:.45rem .7rem;cursor:pointer;
+  background:var(--amber);color:#17130a;transition:opacity .15s;
+}
+.copy:hover{opacity:.86}
+.ghost{
+  display:inline-flex;align-items:center;gap:.5rem;text-decoration:none;
+  border:1px solid var(--line);border-radius:3px;padding:.72rem 1.1rem;
+  font-family:var(--display);font-weight:600;letter-spacing:.04em;color:var(--text);
+  transition:border-color .15s,color .15s;
+}
+.ghost:hover{border-color:var(--amber);color:var(--bright)}
+.trust{
+  display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;margin-top:1.75rem;
+  font-family:var(--mono);font-size:.8125rem;color:var(--dim);
+}
+.trust b{color:var(--text);font-weight:500}
+
+/* Photo band with annotation */
+.band{position:relative;margin-top:clamp(2.5rem,5vw,4rem)}
+.band img{width:100%;height:clamp(150px,22vw,260px);object-fit:cover;object-position:58% 42%}
+.band::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(to bottom,color-mix(in srgb,var(--photo-fade) 55%,transparent) 0%,transparent 30%,transparent 60%,var(--photo-fade) 100%);
+}
+/* Sits over the lit indicator on the "2" key in the photograph. */
+.annot{
+  position:absolute;left:54.5%;top:11%;z-index:2;
+  font-family:var(--mono);font-size:.75rem;color:var(--bright);
+  text-shadow:0 1px 8px rgba(0,0,0,.9);display:flex;align-items:center;gap:.5rem;
+}
+.annot .dot{width:7px;height:7px;border-radius:50%;background:var(--bright);box-shadow:0 0 10px 3px rgba(255,255,255,.55)}
+@media(max-width:700px){.annot{display:none}}
+
+/* ── Panel (the interactive bit) ────────────────────────────────────────── */
+.panel-sec{margin-top:-3.5rem;position:relative;z-index:3;padding-bottom:clamp(3rem,7vw,6rem)}
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:4px;
+  box-shadow:var(--shadow);overflow:hidden;
+}
+.panel-head{
+  display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;
+  padding:1rem 1.25rem;border-bottom:1px solid var(--line-soft);background:var(--panel-2);
+}
+.panel-head .t{font-family:var(--display);font-weight:600;font-size:1.0625rem;color:var(--bright);letter-spacing:.02em}
+.panel-head .h{font-family:var(--mono);font-size:.8125rem;color:var(--dim);margin-left:auto}
+
+.slots{display:flex;gap:.75rem;padding:1.25rem;flex-wrap:wrap;align-items:center}
+.slots .cue{font-family:var(--display);font-weight:600;font-size:.8125rem;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-right:.25rem}
+.key{
+  --k:var(--led-off);
+  display:grid;grid-template-columns:auto auto;align-items:center;gap:.55rem;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:5px;
+  padding:.6rem .95rem;cursor:pointer;color:var(--text);
+  font-family:var(--display);font-weight:600;font-size:1.0625rem;letter-spacing:.06em;
+  transition:border-color .18s,background .18s,transform .08s;
+}
+.key:hover{border-color:var(--amber)}
+.key:active{transform:translateY(1px)}
+.key .led{width:8px;height:8px;border-radius:50%;background:var(--k);transition:background .25s,box-shadow .25s}
+.key[aria-pressed="true"]{--k:var(--bright);border-color:var(--amber);background:var(--amber-soft)}
+.key[aria-pressed="true"] .led{box-shadow:0 0 10px 2px color-mix(in srgb,var(--bright) 55%,transparent)}
+
+.hosts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line-soft);border-block:1px solid var(--line-soft)}
+@media(max-width:720px){.hosts{grid-template-columns:1fr}}
+.host{background:var(--panel);padding:1.1rem 1.25rem 1.35rem;min-height:186px;display:flex;flex-direction:column;gap:.85rem;transition:background .3s}
+.host.here{background:var(--panel-2)}
+.host-top{display:flex;align-items:center;gap:.6rem}
+.host-num{
+  font-family:var(--display);font-weight:700;font-size:.875rem;letter-spacing:.06em;
+  width:22px;height:22px;display:grid;place-items:center;border-radius:3px;
+  background:transparent;border:1px solid var(--line);color:var(--dim);
+  transition:background .3s,color .3s,border-color .3s;
+}
+.host.here .host-num{border-color:var(--amber)}
+.host.here .host-num{background:var(--amber);color:#17130a}
+.host-name{font-family:var(--display);font-weight:600;font-size:1.0625rem;color:var(--bright);letter-spacing:.02em}
+.host-os{font-family:var(--mono);font-size:.6875rem;color:var(--dim);margin-left:auto;letter-spacing:.02em}
+.host-role{font-family:var(--mono);font-size:.6875rem;color:var(--dim)}
+.chips{display:flex;flex-direction:column;gap:.5rem}
+.chip{
+  display:flex;align-items:center;gap:.6rem;border:1px solid var(--line);
+  border-radius:3px;padding:.5rem .7rem;background:var(--ground-2);
+  font-family:var(--mono);font-size:.8125rem;color:var(--text);
+}
+.chip .tag{margin-left:auto;font-size:.6875rem;color:var(--dim)}
+.chip[data-kind="leader"]{border-color:color-mix(in srgb,var(--amber) 55%,var(--line))}
+.chip[data-kind="clip"]{border-style:dashed}
+.chip .pip{width:6px;height:6px;border-radius:50%;background:var(--green)}
+.chip[data-kind="clip"] .pip{background:var(--amber)}
+.empty{font-family:var(--mono);font-size:.75rem;color:var(--dim);opacity:.65;padding-top:.2rem}
+
+.panel-log{padding:.9rem 1.25rem 1.15rem;background:var(--ground-2)}
+.panel-log ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.3rem;
+  font-family:var(--mono);font-size:.78125rem;color:var(--dim);min-height:5.2em}
+.panel-log li{display:flex;gap:.6rem;animation:slip .32s ease both}
+.panel-log .ts{color:color-mix(in srgb,var(--dim) 65%,transparent);flex:none}
+.panel-log .ok{color:var(--green-ink)}
+.panel-log .am{color:var(--amber-ink)}
+@keyframes slip{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.panel-foot{font-family:var(--mono);font-size:.75rem;color:var(--dim);padding:.7rem 1.25rem;border-top:1px solid var(--line-soft);display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+section{padding-block:clamp(3.5rem,8vw,6.5rem)}
+.sec-alt{background:var(--ground-2);border-block:1px solid var(--line-soft)}
+.sec-head{display:grid;gap:1rem;max-width:60ch;margin-bottom:clamp(2.25rem,4vw,3.25rem)}
+
+.probs{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:1px;background:var(--line-soft);border:1px solid var(--line-soft)}
+.prob{background:var(--ground-2);padding:1.6rem 1.4rem;display:grid;gap:.65rem;align-content:start}
+.prob .n{font-family:var(--mono);font-size:.75rem;color:var(--amber-ink)}
+.prob p{color:var(--dim);font-size:.9375rem}
+
+.feat{display:grid;grid-template-columns:1fr 1fr;gap:clamp(2rem,5vw,4.5rem);align-items:center;padding-block:clamp(2rem,4vw,3.25rem)}
+.feat + .feat{border-top:1px solid var(--line-soft)}
+.feat:nth-child(even) .feat-txt{order:2}
+@media(max-width:860px){.feat{grid-template-columns:1fr;gap:1.75rem}.feat:nth-child(even) .feat-txt{order:0}}
+.feat-txt{display:grid;gap:.85rem;align-content:start}
+.feat-txt p{color:var(--dim)}
+.feat-shot{border:1px solid var(--line);border-radius:4px;overflow:hidden;box-shadow:var(--shadow);background:var(--panel)}
+.notelist{display:grid;gap:.55rem;margin-top:.35rem}
+.notelist div{display:flex;gap:.65rem;font-size:.9375rem;color:var(--dim)}
+.notelist .tick{color:var(--green-ink);flex:none;font-family:var(--mono)}
+
+.steps{display:grid;gap:1px;background:var(--line-soft);border:1px solid var(--line-soft)}
+.step{background:var(--ground);padding:1.5rem;display:grid;grid-template-columns:auto 1fr;gap:1.25rem;align-items:start}
+.sec-alt .step{background:var(--ground-2)}
+.step .n{font-family:var(--display);font-weight:700;font-size:2rem;line-height:1;color:var(--amber-ink);width:1.6ch}
+.step .b{display:grid;gap:.7rem}
+.step p{color:var(--dim);font-size:.9375rem;max-width:62ch}
+/* line-height 1.3 matches the height of Iosevka's box-drawing verticals, so
+   the table borders in the examples below join up instead of showing gaps. */
+pre{
+  margin:0;overflow-x:auto;background:var(--panel);border:1px solid var(--line);
+  border-radius:3px;padding:.8rem 1rem;font-family:var(--mono);font-size:.84375rem;
+  line-height:1.3;color:var(--text);
+}
+pre .c{color:var(--dim)}
+pre .a{color:var(--amber-ink)}
+
+.faq{display:grid;gap:1px;background:var(--line-soft);border-block:1px solid var(--line-soft)}
+details{background:var(--ground);padding:1.1rem .25rem}
+.sec-alt details{background:var(--ground-2)}
+summary{
+  cursor:pointer;font-family:var(--display);font-weight:600;font-size:1.1875rem;
+  color:var(--bright);list-style:none;display:flex;gap:.8rem;align-items:baseline;
+}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"+";color:var(--amber-ink);font-family:var(--mono);font-size:1rem}
+details[open] summary::before{content:"−"}
+details p{color:var(--dim);font-size:.9375rem;margin-top:.7rem;padding-left:1.7rem;max-width:70ch}
+
+.final{text-align:center;display:grid;gap:1.4rem;justify-items:center}
+.final .cta-row{justify-content:center}
+footer{border-top:1px solid var(--line-soft);padding-block:2.5rem;font-size:.875rem;color:var(--dim)}
+.foot-in{display:flex;flex-wrap:wrap;gap:1rem 2rem;align-items:baseline}
+footer a{color:var(--text);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line)}
+footer a:hover{text-decoration-color:var(--amber)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms !important;transition-duration:.001ms !important}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav"><div class="wrap nav-in">
+  <a class="mark" href="#top">logitech<span>-flow-</span>kvm</a>
+  <div class="nav-links">
+    <a class="opt" href="#how">How it works</a>
+    <a class="opt" href="#setup">Setup</a>
+    <a href="https://github.com/coddingtonbear/logitech-flow-kvm">GitHub</a>
+  </div>
+</div></nav>
+
+<header class="hero" id="top"><div class="wrap hero-grid">
+  <div>
+    <p class="eyebrow">Logitech Flow — for the OS Logitech skipped</p>
+    <h1>One key.<br>Every device <em>follows.</em></h1>
+    <p class="lede">Your MX keyboard already jumps between three computers. This makes your mouse
+      come with it — and your clipboard too. On Linux, where Logitech's own Flow has never worked.</p>
+    <div class="cta-row">
+      <span class="install"><span class="pip">$</span><span id="cmd">pip install logitech-flow-kvm</span><button class="copy" id="copy">Copy</button></span>
+      <a class="ghost" href="https://github.com/coddingtonbear/logitech-flow-kvm#basic-use">Read the setup guide →</a>
+    </div>
+    <p class="trust">
+      <span><b>MIT</b> licensed</span>
+      <span>Python <b>3.10 – 3.14</b></span>
+      <span><b>71 ★</b> on GitHub</span>
+      <span>HID++ over your existing <b>Unifying / Bolt</b> receiver</span>
+    </p>
+  </div>
+</div>
+
+<div class="band">
+  <img src="assets/img/keys.webp" alt="A finger reaching for the host-2 key on an MX Keys Mini keyboard, its indicator light lit." width="2200" height="534">
+  <span class="annot"><span class="dot"></span> host 2 · lit</span>
+</div>
+</header>
+
+<div class="panel-sec"><div class="wrap">
+  <div class="panel">
+    <div class="panel-head">
+      <span class="t">Device panel</span>
+      <span class="h mono">demo — press a host key</span>
+    </div>
+
+    <div class="slots" role="group" aria-label="Switch the keyboard to a host">
+      <span class="cue">On the keyboard</span>
+      <button class="key" data-host="1" aria-pressed="true"><span class="led"></span>1</button>
+      <button class="key" data-host="2" aria-pressed="false"><span class="led"></span>2</button>
+      <button class="key" data-host="3" aria-pressed="false"><span class="led"></span>3</button>
+    </div>
+
+    <div class="hosts" id="hosts">
+      <div class="host here" data-host="1">
+        <div class="host-top"><span class="host-num">1</span><span class="host-name">workstation</span><span class="host-os">Fedora 42</span></div>
+        <span class="host-role">flow-server</span>
+        <div class="chips" data-slot="1"></div>
+      </div>
+      <div class="host" data-host="2">
+        <div class="host-top"><span class="host-num">2</span><span class="host-name">thinkpad</span><span class="host-os">Debian 13</span></div>
+        <span class="host-role">flow-client</span>
+        <div class="chips" data-slot="2"></div>
+      </div>
+      <div class="host" data-host="3">
+        <div class="host-top"><span class="host-num">3</span><span class="host-name">macbook</span><span class="host-os">macOS 15</span></div>
+        <span class="host-role">flow-client</span>
+        <div class="chips" data-slot="3"></div>
+      </div>
+    </div>
+
+    <div class="panel-log"><ol id="log" aria-live="polite"></ol></div>
+    <div class="panel-foot">
+      <span class="am mono">↑</span>
+      <span>The keyboard is the <b>leader</b> — it moves the instant you press the key. Everything else is a
+      <b>follower</b>, told where to go a moment later.</span>
+    </div>
+  </div>
+</div></div>
+
+<section class="sec-alt" id="why"><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Why this exists</p>
+    <h2>Three computers, one desk, and a small tax on every switch.</h2>
+  </div>
+  <div class="probs">
+    <article class="prob">
+      <span class="n">01</span>
+      <h3>Flow stops at Linux</h3>
+      <p>Logitech Options+ ships for Windows and macOS. If one of the machines under your desk runs Linux,
+        it simply isn't part of the arrangement — no host following, no shared clipboard, no setting to turn on.</p>
+    </article>
+    <article class="prob">
+      <span class="n">02</span>
+      <h3>Every device switches alone</h3>
+      <p>Multi-host hardware is per-device by design. Press host 2 on the keyboard, then find the tiny button
+        underneath the mouse and press host 2 again. Then do it in reverse, thirty seconds later, when you switch back.</p>
+    </article>
+    <article class="prob">
+      <span class="n">03</span>
+      <h3>The clipboard doesn't travel</h3>
+      <p>You copy an error message on one host and paste it… nowhere. So it goes through a chat window to
+        yourself, or a pastebin, or gets retyped by hand.</p>
+    </article>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">How it works</p>
+    <h2>Watch one device. Command the rest.</h2>
+    <p class="lede">There's no input streaming and no virtual monitor. Your mouse and keyboard stay on
+      their own wireless link to whatever host they're on — this only tells them <em>which</em> host that should be.</p>
+  </div>
+
+  <div class="feat">
+    <div class="feat-txt">
+      <p class="eyebrow">The leader</p>
+      <h3>It notices the moment your keyboard leaves</h3>
+      <p>Pick one device — a keyboard with host keys is ideal — as the leader. <code>flow-server</code> watches its
+        receiver for connect and disconnect notifications, so a host change is observed, not guessed at.</p>
+      <div class="notelist">
+        <div><span class="tick">✓</span><span>Devices are named by serial number, so they survive a replug or a reboot</span></div>
+        <div><span class="tick">✓</span><span>Live status panel in a terminal; plain log lines under systemd</span></div>
+      </div>
+    </div>
+    <figure class="feat-shot" style="margin:0"><img src="assets/img/flow-server.webp" alt="The flow-server terminal display: a status panel showing host, listening address, leader and follower state, above a scrolling log." width="1400" height="940"></figure>
+  </div>
+
+  <div class="feat">
+    <div class="feat-txt">
+      <p class="eyebrow">The link</p>
+      <h3>Across the desk, or across the network</h3>
+      <p>Each host runs a client that subscribes to the server's event stream, so a switch propagates the
+        instant it happens rather than on a poll. First connection walks through a pairing handshake: the client
+        shows a six-digit code, you type it into the server, and from then on the link is TLS with a pinned
+        certificate and a token.</p>
+      <div class="notelist">
+        <div><span class="tick">✓</span><span>Every host keeps its own receiver and its own devices</span></div>
+        <div><span class="tick">✓</span><span>Reach the server by hostname with <code>--hostname</code>, or by IP out of the box</span></div>
+      </div>
+    </div>
+    <figure class="feat-shot" style="margin:0"><img src="assets/img/flow-server-pairing.webp" alt="The flow-server pairing prompt, asking for the six-digit code shown by a connecting client." width="1400" height="940"></figure>
+  </div>
+
+  <div class="feat">
+    <div class="feat-txt">
+      <p class="eyebrow">The clipboard</p>
+      <h3>What you copied is already there</h3>
+      <p>When your keyboard leaves a host, that host's clipboard goes with it; when it lands, the clipboard is
+        waiting. Copy on the workstation, switch, paste on the laptop. Not comfortable with that? <code>--no-clipboard</code>
+        turns it off per host, on the server or on any client.</p>
+    </div>
+    <figure class="feat-shot" style="margin:0"><img src="assets/img/flow-client.webp" alt="The flow-client terminal display showing device status and a scrolling log." width="1400" height="940"></figure>
+  </div>
+
+  <div class="feat">
+    <div class="feat-txt">
+      <p class="eyebrow">The stubborn part</p>
+      <h3>It doesn't assume the switch worked</h3>
+      <p>A Logitech device never acknowledges a host-change command — you send it into the dark. So instead of
+        sleeping and hoping, this keeps issuing the command until it <em>observes</em> the device arrive where it was
+        sent, re-checks devices it believes are gone, and treats a receiver's "no link to that device" as evidence
+        in its own right. A dropped notification or a sleeping mouse doesn't leave you half-switched.</p>
+    </div>
+    <div>
+      <pre><span class="c"># the loop, in the logs</span>
+<span class="a">[INFO]</span> Host 2 connected
+<span class="a">[INFO]</span> Commanding F262458A → host 2
+<span class="a">[INFO]</span> Device F262458A no longer here
+<span class="a">[INFO]</span> Converged: 1 leader, 1 follower</pre>
+    </div>
+  </div>
+</div></section>
+
+<section class="sec-alt" id="setup"><div class="wrap">
+  <div class="sec-head">
+    <p class="eyebrow">Setup</p>
+    <h2>Three commands, one pairing code.</h2>
+  </div>
+  <div class="steps">
+    <div class="step">
+      <span class="n">1</span>
+      <div class="b">
+        <h3>Find your devices</h3>
+        <p>On the machine you'll use as the server. Note the IDs — those are serial numbers, stable across
+          reboots, unlike the <code>/dev/hidraw</code> paths beside them.</p>
+        <pre>$ logitech-flow-kvm list-devices
+
+┏━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ ID       ┃ Product ┃ Name           ┃ Path           ┃
+┡━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ <span class="a">08F5F681</span> │ B369    │ MX Keys Mini   │ /dev/hidraw4:1 │
+│ <span class="a">F262458A</span> │ 406A    │ MX Anywhere 2S │ /dev/hidraw5:1 │
+└──────────┴─────────┴────────────────┴────────────────┘</pre>
+      </div>
+    </div>
+    <div class="step">
+      <span class="n">2</span>
+      <div class="b">
+        <h3>Start the server</h3>
+        <p>The <code>1</code> is this machine's host number — the one lit on your keyboard when it's connected here.
+          Then the leader, then every follower.</p>
+        <pre>$ logitech-flow-kvm flow-server 1 08F5F681 F262458A
+<span class="c">Listening on 0.0.0.0:24801</span></pre>
+      </div>
+    </div>
+    <div class="step">
+      <span class="n">3</span>
+      <div class="b">
+        <h3>Connect the other machines</h3>
+        <p>Each with its own host number. The first time, the client prints a code and the server asks for it —
+          after that they reconnect on their own.</p>
+        <pre>$ logitech-flow-kvm flow-client 2 10.224.224.120
+<span class="c">Pairing code: 481902 — enter this on the server</span></pre>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="sec-head"><p class="eyebrow">Before you start</p><h2>Questions worth answering first.</h2></div>
+  <div class="faq">
+    <details><summary>Does this work with my devices?</summary>
+      <p>You need Logitech devices that can pair with more than one host and connect through a Unifying or Bolt
+        receiver — an MX Keys or MX Keys Mini with the 1/2/3 keys is the ideal leader, and MX Master or MX Anywhere
+        mice make good followers. The tool talks HID++ to the receiver directly, so it needs read and write access
+        to the matching <code>/dev/hidraw</code> device.</p></details>
+    <details><summary>How is this different from Solaar?</summary>
+      <p>Solaar is a full Logitech device manager for Linux, and its documentation of the HID++ protocol is what
+        made this possible. This tool does one thing instead: keeps a group of devices on the same host, across
+        machines, and moves the clipboard with them.</p></details>
+    <details><summary>How is this different from Barrier or input-leap?</summary>
+      <p>Those share one machine's mouse and keyboard with another over the network, so your input travels as
+        packets. Here nothing about your input changes — your devices keep their own wireless link to whichever
+        host they're on, and only the instruction to switch crosses the network.</p></details>
+    <details><summary>Do the other machines have to be Linux?</summary>
+      <p>The host running the server does. Clients run wherever Python 3.10+ runs and can reach a receiver —
+        and a machine with no receiver of its own still benefits, since the leader's arrival is what drives
+        everything else.</p></details>
+    <details><summary>Can I run it as a service?</summary>
+      <p>Yes. Run it non-interactively and the terminal display gives way to plain log lines, which is what you
+        want under systemd. Either way, everything is also written to a rotating log file — 5 MB apiece, five
+        backups deep — in your platform's standard log directory.</p></details>
+  </div>
+</div></section>
+
+<section class="sec-alt"><div class="wrap final">
+  <p class="eyebrow">Stop pressing the same button twice</p>
+  <h2>Give your Linux box its host keys back.</h2>
+  <div class="cta-row">
+    <span class="install"><span class="pip">$</span><span>pip install logitech-flow-kvm</span><button class="copy" id="copy2">Copy</button></span>
+    <a class="ghost" href="https://github.com/coddingtonbear/logitech-flow-kvm">View on GitHub →</a>
+  </div>
+</div></section>
+
+<footer><div class="wrap foot-in">
+  <span>MIT licensed. Built by <a href="https://github.com/coddingtonbear">Adam Coddington</a>.</span>
+  <span>HID++ protocol knowledge thanks to <a href="https://github.com/pwr-Solaar/Solaar">Solaar</a>.</span>
+  <span style="margin-left:auto"><a href="https://pypi.org/project/logitech-flow-kvm/">PyPI</a> · <a href="https://github.com/coddingtonbear/logitech-flow-kvm/issues">Issues</a></span>
+</div></footer>
+
+<script>
+(() => {
+  "use strict";
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* Copy buttons */
+  for (const id of ["copy", "copy2"]) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText("pip install logitech-flow-kvm"); }
+      catch { /* clipboard unavailable — the text is right there to select */ }
+      const was = b.textContent; b.textContent = "Copied";
+      setTimeout(() => { b.textContent = was; }, 1400);
+    });
+  }
+
+  /* ── The device panel ────────────────────────────────────────────────────
+     Leader moves on the keypress; followers are commanded a beat later.
+     That delay is the product: it's the window this tool exists to close. */
+  const devices = [
+    { id: "08F5F681", name: "MX Keys Mini",   kind: "leader",   tag: "leader"   },
+    { id: "F262458A", name: "MX Anywhere 2S", kind: "follower", tag: "follower" },
+    { id: "clipboard", name: "clipboard",     kind: "clip",     tag: "synced"   },
+  ];
+  let host = 1, timers = [];
+
+  const slots = new Map([1, 2, 3].map(n => [n, document.querySelector(`.chips[data-slot="${n}"]`)]));
+  const nodes = new Map();
+
+  for (const d of devices) {
+    const el = document.createElement("div");
+    el.className = "chip";
+    el.dataset.kind = d.kind;
+    el.innerHTML = `<span class="pip"></span><span>${d.name}</span><span class="tag">${d.tag}</span>`;
+    nodes.set(d.id, el);
+    slots.get(1).append(el);
+  }
+  paintEmpties();
+
+  function paintEmpties() {
+    for (const [, box] of slots) {
+      const ghost = box.querySelector(".empty");
+      if (box.querySelector(".chip")) { ghost?.remove(); }
+      else if (!ghost) {
+        const g = document.createElement("span");
+        g.className = "empty"; g.textContent = "— nothing here —";
+        box.append(g);
+      }
+    }
+  }
+
+  /* FLIP: measure, move, animate the difference away. */
+  function move(id, to) {
+    const el = nodes.get(id), dest = slots.get(to);
+    if (!el || el.parentElement === dest) return;
+    const first = el.getBoundingClientRect();
+    dest.append(el);
+    paintEmpties();
+    if (reduce) return;
+    const last = el.getBoundingClientRect();
+    el.animate(
+      [{ transform: `translate(${first.left - last.left}px, ${first.top - last.top}px)`, opacity: .55 },
+       { transform: "none", opacity: 1 }],
+      { duration: 340, easing: "cubic-bezier(.32,.72,.28,1)" }
+    );
+  }
+
+  const logEl = document.getElementById("log");
+  let clock = 0;
+  function say(text, cls) {
+    clock += 0.4 + Math.random() * 0.6;
+    const li = document.createElement("li");
+    const t = new Date(Date.UTC(2026, 6, 17, 9, 14, 0, 0) + clock * 1000);
+    li.innerHTML = `<span class="ts">${t.toISOString().slice(11, 19)}</span><span class="${cls || ""}">${text}</span>`;
+    logEl.append(li);
+    while (logEl.children.length > 4) logEl.firstElementChild.remove();
+  }
+
+  function switchTo(n) {
+    if (n === host) return;
+    for (const t of timers) clearTimeout(t);
+    timers = [];
+    host = n;
+
+    for (const k of document.querySelectorAll(".key")) {
+      k.setAttribute("aria-pressed", String(Number(k.dataset.host) === n));
+    }
+    for (const h of document.querySelectorAll(".host")) {
+      h.classList.toggle("here", Number(h.dataset.host) === n);
+    }
+
+    /* 1. the leader is simply there — you pressed the key */
+    move("08F5F681", n);
+    say(`Device 08F5F681 connected — host ${n}`, "ok");
+
+    /* 2. the clipboard goes with it */
+    timers.push(setTimeout(() => {
+      move("clipboard", n);
+      say(`Clipboard pushed to host ${n} · 214 bytes`, "am");
+    }, reduce ? 0 : 320));
+
+    /* 3. the follower is commanded, and confirmed */
+    timers.push(setTimeout(() => {
+      say(`Commanding F262458A → host ${n}`, "am");
+    }, reduce ? 0 : 560));
+    timers.push(setTimeout(() => {
+      move("F262458A", n);
+      say(`Device F262458A connected — host ${n}`, "ok");
+    }, reduce ? 0 : 1050));
+  }
+
+  for (const k of document.querySelectorAll(".key")) {
+    k.addEventListener("click", () => switchTo(Number(k.dataset.host)));
+  }
+  say("Leader: 08F5F681 · Followers: F262458A");
+  say("Listening on 0.0.0.0:24801 — 2 guests connected");
+})();
+</script>
+</body>
+</html>
