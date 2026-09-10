@@ -31,13 +31,20 @@ class FlowTUIApp(App):
 
     def __init__(self, title: str, on_start: Callable[[FlowTUIApp], None]):
         super().__init__()
+        # Use the terminal's own foreground/background rather than painting a
+        # Textual theme over it -- the UI should look like a plain terminal
+        # program, with colour only where it carries information.
+        self.theme = "ansi-dark"
         self.title = title
         self._on_start = on_start
         self._log_handler: logging.Handler | None = None
 
     def compose(self) -> ComposeResult:
         yield StatusPanel(id="status-panel")
-        yield RichLog(id="log-panel", markup=True, wrap=True)
+        # `min_width=0` so lines wrap at the actual terminal width -- the
+        # default of 78 columns would overflow (invisibly, with the
+        # scrollbar hidden) on narrower terminals.
+        yield RichLog(id="log-panel", markup=True, wrap=True, min_width=0)
 
     def on_mount(self) -> None:
         log_panel = self.query_one(RichLog)

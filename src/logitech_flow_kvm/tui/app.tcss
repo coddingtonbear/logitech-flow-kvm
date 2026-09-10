@@ -9,7 +9,12 @@ StatusPanel {
     padding: 0 1;
 }
 
+/* The log is just a log: no border, no scrollbars, no focus highlight --
+   lines word-wrap to the terminal width and the newest stay in view. */
 RichLog {
     height: 1fr;
-    border: solid $panel;
+    scrollbar-size: 0 0;
+    &:focus {
+        background-tint: transparent;
+    }
 }

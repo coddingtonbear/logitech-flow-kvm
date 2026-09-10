@@ -21,7 +21,7 @@ class PairingCodeModal(ModalScreen[str | None]):
     #pairing-dialog {
         width: 60;
         height: auto;
-        border: thick $accent;
+        border: solid $accent;
         background: $surface;
         padding: 1 2;
     }

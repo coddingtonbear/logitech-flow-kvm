@@ -77,3 +77,23 @@ class TestFlowTUIApp:
             assert set(root.handlers) == handlers_before
 
         run(body())
+
+    def test_the_ui_inherits_the_terminals_colours_and_keeps_the_log_plain(self):
+        async def body():
+            app = FlowTUIApp("flow-server", on_start=lambda a: None)
+            async with app.run_test():
+                # No painted theme background -- the terminal's own colours.
+                assert app.current_theme.ansi is True
+
+                # The log is just a log: word-wrapped to the widget's width,
+                # with no border or scrollbars around it.
+                log_widget = app.query_one(RichLog)
+                assert log_widget.wrap is True
+                assert log_widget.min_width == 0
+                assert log_widget.styles.scrollbar_size_vertical == 0
+                assert log_widget.styles.scrollbar_size_horizontal == 0
+                assert all(
+                    border_type == "" for border_type, _ in log_widget.styles.border
+                )
+
+        run(body())
