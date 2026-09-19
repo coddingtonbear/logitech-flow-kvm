@@ -32,6 +32,9 @@ class ClientStatus:
     server: str
     connected_to_server: bool = False
     leader_host: int | None = None
+    # Whether the leader host is currently being ignored because the server
+    # that reported it can't be reached -- see `FlowClient._get_desired_host`.
+    holding: bool = False
     followers: list[DeviceStatus] = field(default_factory=list)
 
 
@@ -78,10 +81,10 @@ def render_client_status(status: ClientStatus) -> Table:
         "Connection",
         "[green]connected[/]" if status.connected_to_server else "[red]disconnected[/]",
     )
-    table.add_row(
-        "Leader host",
-        str(status.leader_host) if status.leader_host is not None else "-",
-    )
+    leader_host = str(status.leader_host) if status.leader_host is not None else "-"
+    if status.holding:
+        leader_host += " [yellow](unreachable -- holding devices here)[/]"
+    table.add_row("Leader host", leader_host)
     for follower in status.followers:
         table.add_row("Follower", _device_cell(follower))
 

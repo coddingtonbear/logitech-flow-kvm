@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 from textual.widgets import RichLog
 
@@ -95,5 +96,47 @@ class TestFlowTUIApp:
                 assert all(
                     border_type == "" for border_type, _ in log_widget.styles.border
                 )
+
+        run(body())
+
+    def test_r_runs_the_resync_hook(self):
+        done = threading.Event()
+
+        async def body():
+            app = FlowTUIApp("flow-client", on_start=lambda a: None, on_resync=done.set)
+            async with app.run_test() as pilot:
+                await pilot.press("r")
+                assert done.wait(5)
+
+        run(body())
+
+    def test_the_resync_hook_runs_off_the_ui_thread(self):
+        # It talks to receivers and unblocks a network reconnect; doing that
+        # on Textual's event loop would freeze the display the user pressed
+        # the key to fix.
+        threads: list[int] = []
+
+        async def body():
+            app = FlowTUIApp(
+                "flow-client",
+                on_start=lambda a: None,
+                on_resync=lambda: threads.append(threading.get_ident()),
+            )
+            async with app.run_test() as pilot:
+                await pilot.press("r")
+                for _ in range(50):
+                    if threads:
+                        break
+                    await asyncio.sleep(0.02)
+
+                assert threads and threads[0] != threading.get_ident()
+
+        run(body())
+
+    def test_r_is_harmless_without_a_resync_hook(self):
+        async def body():
+            app = FlowTUIApp("flow-server", on_start=lambda a: None)
+            async with app.run_test() as pilot:
+                await pilot.press("r")  # should not raise
 
         run(body())

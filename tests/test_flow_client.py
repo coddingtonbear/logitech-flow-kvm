@@ -1,6 +1,7 @@
 import argparse
 import queue
 import threading
+import time
 import types
 from typing import Any
 from unittest.mock import Mock
@@ -549,7 +550,9 @@ class TestConsumeEvents:
         client.local_receivers = [fake_receiver]
         stream = FakeResponse(ok=True, lines=["event: leader-host", "data: 5", ""])
         monkeypatch.setattr(client, "request", Mock(return_value=stream))
-        monkeypatch.setattr(flow_client.time, "sleep", lambda s: client._stop.set())
+        monkeypatch.setattr(
+            client, "_sleep_between_retries", lambda s: client._stop.set()
+        )
 
         client._consume_events()
 
@@ -563,7 +566,9 @@ class TestConsumeEvents:
         stream = FakeResponse(ok=True, lines=[])
         request_mock = Mock(return_value=stream)
         monkeypatch.setattr(client, "request", request_mock)
-        monkeypatch.setattr(flow_client.time, "sleep", lambda s: client._stop.set())
+        monkeypatch.setattr(
+            client, "_sleep_between_retries", lambda s: client._stop.set()
+        )
 
         client._consume_events()
 
@@ -590,7 +595,7 @@ class TestConsumeEvents:
             if len(sleeps) >= 3:
                 client._stop.set()
 
-        monkeypatch.setattr(flow_client.time, "sleep", fake_sleep)
+        monkeypatch.setattr(client, "_sleep_between_retries", fake_sleep)
 
         client._consume_events()
 
@@ -614,7 +619,7 @@ class TestConsumeEvents:
             if len(sleeps) >= 8:
                 client._stop.set()
 
-        monkeypatch.setattr(flow_client.time, "sleep", fake_sleep)
+        monkeypatch.setattr(client, "_sleep_between_retries", fake_sleep)
 
         client._consume_events()
 
@@ -644,7 +649,7 @@ class TestConsumeEvents:
             if len(sleeps) >= 2:
                 client._stop.set()
 
-        monkeypatch.setattr(flow_client.time, "sleep", fake_sleep)
+        monkeypatch.setattr(client, "_sleep_between_retries", fake_sleep)
 
         client._consume_events()
 
@@ -680,7 +685,9 @@ class TestConsumeEvents:
         )
         stream = FakeResponse(ok=True, lines=[])
         monkeypatch.setattr(client, "request", Mock(return_value=stream))
-        monkeypatch.setattr(flow_client.time, "sleep", lambda s: client._stop.set())
+        monkeypatch.setattr(
+            client, "_sleep_between_retries", lambda s: client._stop.set()
+        )
 
         client._consume_events()
 
@@ -890,3 +897,227 @@ class TestCallbackFollowerMatching:
         client = make_client()
 
         assert client.follower_devices == []
+
+
+class TestGetDesiredHost:
+    """`leader_host` is a belief with no expiry, formed from one connect
+    notification relayed by the server. Acting on it once the server is
+    unreachable means repeatedly shoving the user's devices onto a machine
+    that may be unplugged -- and since a receiver can only push a device
+    away, never pull one back, only the user can undo that, by hand, every
+    time."""
+
+    def test_acts_on_the_leader_host_while_the_server_is_reachable(self):
+        client = make_client(leader_host=1, _connected_to_server=True)
+
+        assert client._get_desired_host() == 1
+
+    def test_holds_once_the_server_has_been_unreachable_past_the_grace_period(
+        self, monkeypatch
+    ):
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD + 1,
+        )
+
+        assert client._get_desired_host() is None
+
+    def test_keeps_acting_during_a_brief_outage(self, monkeypatch):
+        # A wifi blip or a server restart is common and self-healing;
+        # freezing instantly would stall a switch the user just asked for.
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD - 1,
+        )
+
+        assert client._get_desired_host() == 1
+
+    def test_holds_before_the_first_connection_ever_succeeds(self):
+        client = make_client(leader_host=1, _connected_to_server=False)
+
+        assert client._disconnected_since is None
+        assert client._get_desired_host() is None
+
+    def test_nothing_to_do_when_no_leader_host_is_known(self):
+        client = make_client(leader_host=None, _connected_to_server=True)
+
+        assert client._get_desired_host() is None
+
+    def test_the_leader_being_here_outranks_a_stale_server_belief(self):
+        # Direct physical evidence beats hearsay: on reconnect the server
+        # may hand us its pre-outage snapshot before our own re-announcement
+        # has corrected it, and acting on that would fling the followers at
+        # the host the leader just left.
+        client = make_client(leader_host=1, _connected_to_server=True)
+        client._leader_here = True
+
+        assert client._get_desired_host() == client.options.host_number
+
+    def test_the_leader_being_here_wins_even_while_holding(self):
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client._leader_here = True
+
+        assert client._get_desired_host() == client.options.host_number
+
+    def test_resumes_once_the_server_comes_back(self, monkeypatch):
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD + 1,
+        )
+        assert client._get_desired_host() is None
+
+        client._connected_to_server = True
+
+        assert client._get_desired_host() == 1
+
+    def test_holding_is_announced_once_rather_than_every_tick(
+        self, monkeypatch, caplog
+    ):
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD + 1,
+        )
+
+        with caplog.at_level("WARNING"):
+            for _ in range(5):
+                client._get_desired_host()
+
+        assert len(caplog.records) == 1
+
+    def test_a_held_host_shows_in_the_status(self, monkeypatch):
+        client = make_client(leader_host=1, _connected_to_server=False)
+        client.follower_devices = []
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD + 1,
+        )
+
+        assert client._build_status().holding is True
+
+    def test_our_own_host_number_is_never_reported_as_held(self, monkeypatch):
+        # Nothing is being withheld: the followers already belong here.
+        client = make_client(
+            leader_host=2, _connected_to_server=False, follower_devices=[]
+        )
+        client._disconnected_since = 100.0
+        monkeypatch.setattr(
+            flow_client.time,
+            "monotonic",
+            lambda: 100.0 + flow_client.SERVER_GRACE_PERIOD + 1,
+        )
+
+        assert client.options.host_number == 2
+        assert client._build_status().holding is False
+
+
+class TestLeaderHereTracking:
+    def test_a_leader_connect_records_that_the_leader_is_here(self):
+        client = make_client(reconciler=Mock(), leader_id="LEAD", follower_devices=[])
+        client.clipboard_enabled = False
+        device = types.SimpleNamespace(id="LEAD", receiver=None, number=1)
+        receiver = Mock()
+        receiver.get_device.return_value = device
+
+        client.callback(receiver, connection_notification(1, connected=True))
+
+        assert client._leader_here is True
+
+    def test_a_leader_disconnect_records_that_it_has_gone(self):
+        client = make_client(reconciler=Mock(), leader_id="LEAD", follower_devices=[])
+        client.clipboard_enabled = False
+        device = types.SimpleNamespace(id="LEAD", receiver=None, number=1)
+        receiver = Mock()
+        receiver.get_device.return_value = device
+
+        client.callback(receiver, connection_notification(1, connected=True))
+        client.callback(receiver, connection_notification(1, connected=False))
+
+        assert client._leader_here is False
+
+    def test_a_leader_notification_wakes_the_reconciler(self):
+        # The desired host changes as a result, so waiting out the next
+        # coarse tick would leave devices pointed at the old answer.
+        reconciler = Mock()
+        client = make_client(
+            reconciler=reconciler, leader_id="LEAD", follower_devices=[]
+        )
+        client.clipboard_enabled = False
+        device = types.SimpleNamespace(id="LEAD", receiver=None, number=1)
+        receiver = Mock()
+        receiver.get_device.return_value = device
+
+        client.callback(receiver, connection_notification(1, connected=True))
+
+        reconciler.poke.assert_called_once()
+
+
+class TestHandleEventClearsLeaderHost:
+    def test_an_empty_payload_means_the_server_no_longer_knows(self):
+        client = make_client(reconciler=Mock(), leader_host=1)
+
+        client._handle_event("leader-host", "")
+
+        assert client.leader_host is None
+
+    def test_clearing_wakes_the_reconciler(self):
+        reconciler = Mock()
+        client = make_client(reconciler=reconciler, leader_host=1)
+
+        client._handle_event("leader-host", "")
+
+        reconciler.poke.assert_called_once()
+
+
+class TestResync:
+    def test_re_announces_local_devices(self):
+        client = make_client()
+        receiver = Mock()
+        client.local_receivers = [receiver]
+
+        client.resync()
+
+        receiver.notify_devices.assert_called_once()
+
+    def test_cuts_short_the_reconnect_backoff(self):
+        client = make_client()
+        client.local_receivers = []
+
+        client.resync()
+
+        # `_sleep_between_retries` returns immediately rather than waiting.
+        started = time.monotonic()
+        client._sleep_between_retries(30.0)
+        assert time.monotonic() - started < 1.0
+
+    def test_the_shortcut_only_applies_once(self):
+        client = make_client()
+        client.local_receivers = []
+        client.resync()
+        client._sleep_between_retries(0.0)
+
+        assert not client._resync.is_set()
+
+    def test_a_dead_receiver_does_not_break_the_resync(self):
+        client = make_client()
+        dead = Mock()
+        dead.notify_devices.side_effect = OSError("gone")
+        alive = Mock()
+        client.local_receivers = [dead, alive]
+
+        client.resync()
+
+        alive.notify_devices.assert_called_once()

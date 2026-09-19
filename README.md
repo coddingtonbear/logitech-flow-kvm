@@ -27,6 +27,7 @@ If you'd rather see what it does before reading how to set it up, there's a proj
 - Automatically switches all devices from one host to another when just one of your devices switches hosts.  This is particularly useful if you are using a device like the MX Keys Mini which includes buttons that can be used for switching hosts with a single keypress.
 - Securely keeps clipboards in sync when switching between hosts. Now you can copy/paste from one host to another without thinking anything about it.
 - Encrypted, paired connections between server and clients -- a one-time pairing-code handshake secures the link, so switching hosts across machines on your network is as safe as doing it on one desk.
+- Holds your devices where they are, rather than pushing them onto a machine that's been switched off or unplugged.  Knowledge of where your leader device is expires when the host that reported it goes away, and comes back by itself -- no restart -- once it returns.
 - A live TUI status display when run in a terminal (device/leader status, connection state, scrolling log), with a clean, plain-log fallback when run non-interactively -- e.g. under systemd.
 - A rotating log file kept on disk regardless of how it's run, so you can always see what happened after the fact.
 
@@ -128,6 +129,14 @@ You can see when a device connects or disconnects from the receiver using the fo
 ```
 
 If you'd like to run a command when a device connects or disconnects, use the `--on-disconnect-execute` or `--on-connect-execute` arguments.  See the "Automatically switch your mouse to a different host when your keyboard disconnects" section below for a concrete example of how you might use this.
+
+## Turning a computer off (or unplugging it)
+
+Nothing special is required -- just switch it off.
+
+Knowing where your leader device is always comes from that device connecting to a host and that host saying so, so a host that vanishes takes its half of that knowledge with it.  Rather than carrying on and pushing your mouse onto a machine that may no longer be there, the remaining hosts stop switching devices and hold them wherever they are -- which is, by definition, somewhere that still works.  `flow-client` says so in its display (`Leader host  1 (unreachable -- holding devices here)`), and both programs log the moment they start and stop holding.
+
+Recovery needs no intervention either: when the missing machine comes back, every host re-announces which devices it can see, everyone relearns where the leader actually is, and switching resumes on its own within a few seconds.  If you'd rather not wait for that, press `r` in `flow-client`'s display to re-announce and reconnect immediately, or simply press the host button on your keyboard -- that's the same evidence arriving by the most direct route available.
 
 # Logs
 

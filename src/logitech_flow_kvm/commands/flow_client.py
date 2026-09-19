@@ -39,9 +39,21 @@ from . import LogitechFlowKvmCommand
 
 logger = logging.getLogger(__name__)
 
-# Backoff for reconnecting the /events stream after it drops.
+# Backoff for reconnecting the /events stream after it drops. The maximum is
+# deliberately short: while the stream is down this host stops acting on the
+# leader's whereabouts (see `_get_desired_host`), and the reconnect is what
+# ends that. A failed connect to a host that isn't there costs almost
+# nothing, so there's no reason to make the user wait out a long backoff
+# once the server does come back.
 EVENTS_MIN_BACKOFF = 1.0
-EVENTS_MAX_BACKOFF = 30.0
+EVENTS_MAX_BACKOFF = 5.0
+
+# How long after the /events stream drops we keep acting on the last-known
+# leader host. Short outages (a wifi blip, a server restart) are common and
+# self-healing, and freezing instantly would stall a switch the user just
+# asked for; a host that's genuinely gone stays gone for far longer than
+# this.
+SERVER_GRACE_PERIOD = 10.0
 
 # Default (connect, read) timeout for ordinary request/response calls.
 # Without one, `requests` waits forever -- so a network change that
@@ -81,6 +93,17 @@ class FlowClient(LogitechFlowKvmCommand):
     # non-interactively, in which case status updates are simply skipped.
     tui: FlowTUIApp | None = None
     _connected_to_server: bool = False
+    # When the /events stream last dropped, so `_get_desired_host` can tell a
+    # momentary blip from a host that's actually gone. `None` until the first
+    # drop (and, at startup, until the first successful connection).
+    _disconnected_since: float | None = None
+    # Whether the leader is connected to *this* host right now, learned from
+    # our own notifications. Direct evidence, and therefore better than
+    # anything the server can tell us about where the leader is.
+    _leader_here: bool = False
+    # Whether we're currently declining to act on `leader_host`; tracked only
+    # so the transitions get logged once rather than every reconcile tick.
+    _holding: bool = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -92,6 +115,8 @@ class FlowClient(LogitechFlowKvmCommand):
         # a clipboard push on leader-disconnect completes before the pull
         # triggered by the next connect.
         self._http_tasks: queue.Queue[Callable[[], None]] = queue.Queue()
+        # Set by `resync()` to cut short the /events reconnect backoff.
+        self._resync = threading.Event()
         # Populated by `handle()`; empty until then so notification handling
         # is well-defined even before devices have been resolved.
         self.follower_devices = []
@@ -146,7 +171,14 @@ class FlowClient(LogitechFlowKvmCommand):
         else:
             logger.info("Device %s disconnected", device.id)
 
-        if not is_leader:
+        if is_leader:
+            # Direct evidence of the leader's whereabouts, which outranks
+            # whatever the server last told us -- `_get_desired_host` uses it
+            # to guarantee we never drive followers away from a host that is
+            # demonstrably holding the leader.
+            self._leader_here = connected
+            self.reconciler.poke()
+        else:
             self.reconciler.observe(device, connected)
 
         if connected:
@@ -158,6 +190,66 @@ class FlowClient(LogitechFlowKvmCommand):
             self._http_tasks.put(self._push_clipboard)
 
         self._publish_status()
+
+    def _server_evidence_is_fresh(self) -> bool:
+        """Can `leader_host` still be trusted? It's only ever as good as our
+        connection to the server that told us -- and that connection is also
+        the only thing that would ever correct it."""
+        if self._connected_to_server:
+            return True
+        if self._disconnected_since is None:
+            return False
+        return (time.monotonic() - self._disconnected_since) < SERVER_GRACE_PERIOD
+
+    def _is_holding(self) -> bool:
+        """Are we declining to act on a desired host because we can no longer
+        confirm the host is there?"""
+        if self._leader_here or self._server_evidence_is_fresh():
+            return False
+        return (
+            self.leader_host is not None
+            and self.leader_host != self.options.host_number
+        )
+
+    def _get_desired_host(self) -> int | None:
+        """Where the reconciler should be driving followers, right now.
+
+        `leader_host` on its own isn't enough: it's a belief formed from a
+        single connect notification, and nothing about it expires. If the
+        host it names is unplugged, acting on it means shoving the user's
+        mouse onto a dead machine every couple of seconds, forever -- and
+        since a receiver can only push a device away and never pull one
+        back, nobody can undo that but the user, by hand, repeatedly.
+
+        So the belief is only actionable while its source -- our connection
+        to the server -- is alive. Without that, we return `None` and the
+        reconciler simply holds: the devices stay on whichever host they're
+        on, which is by definition one that works. Recovery needs no
+        intervention; reconnecting re-announces our devices, which
+        re-establishes where the leader really is.
+        """
+        holding = self._is_holding()
+        if holding != self._holding:
+            self._holding = holding
+            if holding:
+                logger.warning(
+                    "Cannot reach the server, so it's no longer safe to assume "
+                    "the leader is still on host %s; holding devices here until "
+                    "the server is reachable again",
+                    self.leader_host,
+                )
+            else:
+                logger.info(
+                    "The leader's whereabouts are known again; resuming host switching"
+                )
+            self._publish_status()
+
+        if self._leader_here:
+            # The leader is right here, so here is where the followers
+            # belong. (`Reconciler` treats our own host number as "nothing
+            # to do", which is exactly right.)
+            return self.options.host_number
+        return None if holding else self.leader_host
 
     def _report_leader_host_here(self) -> None:
         """Positive evidence: the leader is here. Report it so every client
@@ -226,7 +318,10 @@ class FlowClient(LogitechFlowKvmCommand):
 
     def _handle_event(self, event_type: str, data: str) -> None:
         if event_type == "leader-host":
-            self.leader_host = int(data)
+            # An empty payload is the server saying it no longer knows --
+            # e.g. the client for the host it believed held the leader just
+            # disconnected, taking the only source of evidence with it.
+            self.leader_host = int(data) if data else None
             self.reconciler.poke()
             self._publish_status()
         elif event_type == "host-connected":
@@ -238,6 +333,7 @@ class FlowClient(LogitechFlowKvmCommand):
             server=self.options.server,
             connected_to_server=self._connected_to_server,
             leader_host=self.leader_host,
+            holding=self._is_holding(),
             followers=[
                 DeviceStatus(
                     id=device.id,
@@ -263,17 +359,7 @@ class FlowClient(LogitechFlowKvmCommand):
                     timeout=(10, EVENTS_READ_TIMEOUT),
                 )
                 response.raise_for_status()
-                # Re-announce our own devices' current status as a side
-                # effect of (re)establishing this connection, so the server
-                # recovers cross-client state (e.g. after a restart) at the
-                # same moment we're asking it for its current state.
-                for receiver in self.local_receivers:
-                    try:
-                        receiver.notify_devices()
-                    except OSError:
-                        # This receiver is gone (unplugged); the
-                        # ReceiverManager will rebuild it and re-announce.
-                        pass
+                self._renotify_receivers()
                 backoff = EVENTS_MIN_BACKOFF
                 self._connected_to_server = True
                 self._publish_status()
@@ -285,11 +371,47 @@ class FlowClient(LogitechFlowKvmCommand):
                 pass
             if self._connected_to_server:
                 self._connected_to_server = False
+                self._disconnected_since = time.monotonic()
                 self._publish_status()
             if self._stop.is_set():
                 return
-            time.sleep(backoff)
+            self._sleep_between_retries(backoff)
             backoff = min(backoff * 2, EVENTS_MAX_BACKOFF)
+
+    def _renotify_receivers(self) -> None:
+        """Ask every local receiver to resend a connection notification per
+        device.
+
+        This is the recovery mechanism the whole design leans on: replaying
+        those notifications re-derives what this host actually knows -- which
+        devices are here, and whether the leader is among them -- and reports
+        it onward. Done on every (re)connection of the /events stream, so a
+        server that went away and came back relearns the truth rather than
+        carrying on with whatever it believed beforehand.
+        """
+        for receiver in self.local_receivers:
+            try:
+                receiver.notify_devices()
+            except OSError:
+                # This receiver is gone (unplugged); the ReceiverManager
+                # will rebuild it and re-announce.
+                pass
+
+    def _sleep_between_retries(self, seconds: float) -> None:
+        """Wait out the reconnect backoff, unless `resync()` says otherwise."""
+        self._resync.wait(seconds)
+        self._resync.clear()
+
+    def resync(self) -> None:
+        """Re-establish everything by hand, without waiting.
+
+        Recovery is automatic, but its timing is bounded by the reconnect
+        backoff -- so this exists for the case where someone is looking at a
+        held display and would rather not wait for it.
+        """
+        logger.info("Resynchronising with the server")
+        self._renotify_receivers()
+        self._resync.set()
 
     def build_url(self, *route_segments: str) -> str:
         return (
@@ -404,7 +526,7 @@ class FlowClient(LogitechFlowKvmCommand):
 
         self.reconciler = Reconciler(
             self.follower_devices,
-            get_desired_host=lambda: self.leader_host,
+            get_desired_host=self._get_desired_host,
             host_number=self.options.host_number,
             on_error=self._reconciler_error,
             on_observation=self._reconciler_observation,
@@ -431,7 +553,8 @@ class FlowClient(LogitechFlowKvmCommand):
             # Textual owns the main thread's event loop from here; Ctrl+C
             # is handled internally as a quit keybinding, not a raised
             # KeyboardInterrupt.
-            FlowTUIApp("flow-client", on_start=on_start).run()
+            logger.info("Press 'r' to resynchronise with the server at any time")
+            FlowTUIApp("flow-client", on_start=on_start, on_resync=self.resync).run()
             self._stop.set()
             self.reconciler.stop()
             self.manager.stop()

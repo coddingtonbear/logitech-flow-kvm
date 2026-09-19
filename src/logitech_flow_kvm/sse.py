@@ -107,6 +107,19 @@ class EventBroadcaster:
             self._state = data
         self.broadcast(event, data)
 
+    def clear_state(self, event: str) -> None:
+        """Forget the current state and tell every subscriber it is unknown.
+
+        The counterpart to `set_state`, for when the evidence behind the
+        state goes away rather than being replaced: a new subscriber then
+        gets no snapshot at all (`subscribe` returns `None`), and existing
+        ones get the event with an empty payload -- the wire representation
+        of "unknown", since SSE has no way to send "no data".
+        """
+        with self._lock:
+            self._state = None
+        self.broadcast(event, "")
+
     def broadcast(
         self, event: str, data: str, *, exclude: queue.Queue[str] | None = None
     ) -> None:

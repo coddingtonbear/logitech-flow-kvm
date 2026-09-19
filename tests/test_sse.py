@@ -170,3 +170,45 @@ class TestSubscriberNames:
         q, _ = broadcaster.subscribe()
 
         broadcaster.unsubscribe(q)  # should not raise
+
+
+class TestClearState:
+    def test_forgets_the_current_state(self):
+        broadcaster = EventBroadcaster()
+        broadcaster.set_state("leader-host", "2")
+
+        broadcaster.clear_state("leader-host")
+
+        assert broadcaster.state is None
+
+    def test_broadcasts_an_empty_payload_to_existing_subscribers(self):
+        broadcaster = EventBroadcaster()
+        broadcaster.set_state("leader-host", "2")
+        q, _ = broadcaster.subscribe()
+
+        broadcaster.clear_state("leader-host")
+
+        assert q.get_nowait() == "event: leader-host\ndata: \n\n"
+
+    def test_new_subscribers_get_no_snapshot_afterwards(self):
+        broadcaster = EventBroadcaster()
+        broadcaster.set_state("leader-host", "2")
+
+        broadcaster.clear_state("leader-host")
+        _, current = broadcaster.subscribe()
+
+        assert current is None
+
+    def test_the_empty_payload_round_trips_back_to_an_empty_string(self):
+        # The wire representation of "unknown" has to survive the parser --
+        # `flow_client._handle_event` distinguishes it from a host number by
+        # its emptiness, so a parser that dropped the event entirely would
+        # leave clients acting on a belief the server just retracted.
+        broadcaster = EventBroadcaster()
+        q, _ = broadcaster.subscribe()
+
+        broadcaster.clear_state("leader-host")
+
+        assert list(parse_sse_stream(q.get_nowait().split("\n"))) == [
+            ("leader-host", "")
+        ]

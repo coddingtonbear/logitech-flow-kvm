@@ -278,6 +278,33 @@ class FlowServerAPI(Flask):
         self.reconciler.poke()
         self._publish_status()
 
+    def forget_leader_host_if_on(self, host: str) -> None:
+        """The client for `host` just lost its event stream; if that's where
+        we believed the leader was, stop believing it.
+
+        That belief only ever came from that client, and only that client
+        could ever correct it -- so with the client gone, it's a claim about
+        a machine nobody can see any more. Left standing, every host
+        (including this one) would keep driving followers onto a machine
+        that may well be unplugged, which a user can only undo by hand, over
+        and over.
+
+        Clearing it costs nothing if the client is merely reconnecting: on
+        reconnect it re-announces its devices, and if the leader really is
+        there, the fact is re-established within a moment.
+        """
+        if self.events.state != host:
+            return
+
+        logger.warning(
+            "Host %s disconnected, so the leader can no longer be assumed to "
+            "be there; holding devices where they are until the leader turns "
+            "up somewhere",
+            host,
+        )
+        self.events.clear_state("leader-host")
+        self._publish_status()
+
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:
         logger.warning(
             "Could not switch %s to the desired host yet (%s); will retry",
@@ -389,6 +416,8 @@ def bind_routes(app: FlowServerAPI) -> None:
                         yield ": keepalive\n\n"
             finally:
                 app.events.unsubscribe(subscriber_queue)
+                logger.info("Host %s disconnected", connecting_host)
+                app.forget_leader_host_if_on(connecting_host)
                 app._publish_status()
 
         return Response(stream(), mimetype="text/event-stream")

@@ -384,7 +384,11 @@ class TestConnectedGuests:
         app.tui = Mock()
         client = app.test_client()
 
-        response = client.get("/events", headers=_auth_headers(app, "2"))
+        # Guest "3", not "2": a departing guest that *is* the leader host
+        # additionally clears the leader host (see
+        # `TestForgetLeaderHostIfOn`), which publishes a status of its own
+        # and would make this count about two behaviours instead of one.
+        response = client.get("/events", headers=_auth_headers(app, "3"))
         assert app.tui.update_status.call_count == 1
         next(response.response)  # advance past the initial snapshot
 
@@ -535,3 +539,82 @@ class TestPairingRouteWithTui:
         )
 
         assert response.status_code == 401
+
+
+class TestForgetLeaderHostIfOn:
+    """The leader host is a belief sourced from exactly one client. When that
+    client's event stream goes away -- its machine unplugged, say -- nothing
+    can confirm or correct the belief any more, so continuing to act on it
+    means driving followers onto a machine that may not be there."""
+
+    def test_clears_the_leader_host_when_that_host_disconnects(self, app):
+        app.report_leader_host(2)
+
+        app.forget_leader_host_if_on("2")
+
+        assert app._get_desired_host() is None
+
+    def test_leaves_the_leader_host_alone_when_another_host_disconnects(self, app):
+        app.report_leader_host(2)
+
+        app.forget_leader_host_if_on("3")
+
+        assert app._get_desired_host() == 2
+
+    def test_does_nothing_when_no_leader_host_is_known(self, app):
+        app.forget_leader_host_if_on("2")
+
+        assert app._get_desired_host() is None
+
+    def test_publishes_status(self, app):
+        app.report_leader_host(2)
+        app.tui = Mock()
+
+        app.forget_leader_host_if_on("2")
+
+        app.tui.update_status.assert_called_once()
+
+    def test_closing_the_leader_hosts_stream_clears_the_leader_host(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+        response = client.get("/events", headers=_auth_headers(app, "2"))
+        next(response.response)  # advance past the initial snapshot
+
+        response.response.close()
+
+        assert app._get_desired_host() is None
+
+    def test_closing_another_hosts_stream_leaves_the_leader_host_alone(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+        response = client.get("/events", headers=_auth_headers(app, "3"))
+        next(response.response)
+
+        response.response.close()
+
+        assert app._get_desired_host() == 2
+
+    def test_remaining_subscribers_are_told_the_leader_host_is_unknown(self, app):
+        app.report_leader_host(2)
+        client = app.test_client()
+        watcher = client.get("/events", headers=_auth_headers(app, "4"))
+        next(watcher.response)  # advance past the initial snapshot
+        departing = client.get("/events", headers=_auth_headers(app, "2"))
+        next(departing.response)
+        next(watcher.response)  # consume the host-connected broadcast
+
+        departing.response.close()
+
+        assert next(watcher.response) == b"event: leader-host\ndata: \n\n"
+        watcher.response.close()
+
+    def test_a_later_report_re_establishes_the_leader_host(self, app):
+        # Recovery without intervention: the disconnected host reconnects,
+        # re-announces its devices, and whichever host actually holds the
+        # leader says so again.
+        app.report_leader_host(2)
+        app.forget_leader_host_if_on("2")
+
+        app.report_leader_host(2)
+
+        assert app._get_desired_host() == 2

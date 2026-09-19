@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import RenderableType
 from textual.app import App
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.widgets import RichLog
 
 from ..logging_setup import LOG_FORMAT
@@ -29,7 +31,14 @@ class FlowTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "app.tcss"
 
-    def __init__(self, title: str, on_start: Callable[[FlowTUIApp], None]):
+    BINDINGS = [Binding("r", "resync", "Resync", show=False)]
+
+    def __init__(
+        self,
+        title: str,
+        on_start: Callable[[FlowTUIApp], None],
+        on_resync: Callable[[], None] | None = None,
+    ):
         super().__init__()
         # Use the terminal's own foreground/background rather than painting a
         # Textual theme over it -- the UI should look like a plain terminal
@@ -37,6 +46,7 @@ class FlowTUIApp(App):
         self.theme = "ansi-dark"
         self.title = title
         self._on_start = on_start
+        self._on_resync = on_resync
         self._log_handler: logging.Handler | None = None
 
     def compose(self) -> ComposeResult:
@@ -63,6 +73,18 @@ class FlowTUIApp(App):
         if self._log_handler is not None:
             logging.getLogger().removeHandler(self._log_handler)
             self._log_handler = None
+
+    def action_resync(self) -> None:
+        """Run the command's resync hook, if it has one (flow-client does;
+        flow-server has nothing to resynchronise with).
+
+        On a thread of its own: the hook talks to receivers and unblocks a
+        network reconnect, and blocking Textual's event loop on that would
+        freeze the very display the user pressed the key to fix.
+        """
+        if self._on_resync is None:
+            return
+        threading.Thread(target=self._on_resync, daemon=True).start()
 
     def update_status(self, renderable: RenderableType) -> None:
         """Thread-safe: call from any background thread to refresh the
