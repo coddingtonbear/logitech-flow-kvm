@@ -595,6 +595,9 @@ class TestForgetLeaderHostIfOn:
         assert app._get_desired_host() == 2
 
     def test_remaining_subscribers_are_told_the_leader_host_is_unknown(self, app):
+        # A distinct event type, not "leader-host" with an empty payload: a
+        # client too old to know it ignores it, where an empty payload would
+        # have it parse "" as a host number.
         app.report_leader_host(2)
         client = app.test_client()
         watcher = client.get("/events", headers=_auth_headers(app, "4"))
@@ -605,7 +608,7 @@ class TestForgetLeaderHostIfOn:
 
         departing.response.close()
 
-        assert next(watcher.response) == b"event: leader-host\ndata: \n\n"
+        assert next(watcher.response) == b"event: leader-host-unknown\ndata: 2\n\n"
         watcher.response.close()
 
     def test_a_later_report_re_establishes_the_leader_host(self, app):

@@ -107,18 +107,24 @@ class EventBroadcaster:
             self._state = data
         self.broadcast(event, data)
 
-    def clear_state(self, event: str) -> None:
-        """Forget the current state and tell every subscriber it is unknown.
+    def clear_state(self, event: str, data: str = "") -> None:
+        """Forget the current state and announce that it is unknown.
 
         The counterpart to `set_state`, for when the evidence behind the
         state goes away rather than being replaced: a new subscriber then
         gets no snapshot at all (`subscribe` returns `None`), and existing
-        ones get the event with an empty payload -- the wire representation
-        of "unknown", since SSE has no way to send "no data".
+        ones get `event`.
+
+        `event` is deliberately the caller's to choose, rather than being
+        the same event `set_state` used with an empty payload: SSE has no
+        way to say "no data", and a subscriber too old to expect one would
+        have to parse the empty payload as a value. A separate event type
+        is ignored by anything that doesn't know it -- which is the failure
+        mode you want from a version you've never met.
         """
         with self._lock:
             self._state = None
-        self.broadcast(event, "")
+        self.broadcast(event, data)
 
     def broadcast(
         self, event: str, data: str, *, exclude: queue.Queue[str] | None = None

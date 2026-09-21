@@ -1066,18 +1066,29 @@ class TestLeaderHereTracking:
 
 
 class TestHandleEventClearsLeaderHost:
-    def test_an_empty_payload_means_the_server_no_longer_knows(self):
+    def test_leader_host_unknown_means_the_server_no_longer_knows(self):
         client = make_client(reconciler=Mock(), leader_host=1)
 
-        client._handle_event("leader-host", "")
+        client._handle_event("leader-host-unknown", "1")
 
         assert client.leader_host is None
+
+    def test_an_unrecognised_event_is_ignored(self):
+        # The contract that makes mixed versions safe in both directions:
+        # an event type you don't know changes nothing.
+        reconciler = Mock()
+        client = make_client(reconciler=reconciler, leader_host=1)
+
+        client._handle_event("something-from-the-future", "42")
+
+        assert client.leader_host == 1
+        reconciler.poke.assert_not_called()
 
     def test_clearing_wakes_the_reconciler(self):
         reconciler = Mock()
         client = make_client(reconciler=reconciler, leader_host=1)
 
-        client._handle_event("leader-host", "")
+        client._handle_event("leader-host-unknown", "1")
 
         reconciler.poke.assert_called_once()
 

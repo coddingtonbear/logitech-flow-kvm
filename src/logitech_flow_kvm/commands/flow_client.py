@@ -318,10 +318,18 @@ class FlowClient(LogitechFlowKvmCommand):
 
     def _handle_event(self, event_type: str, data: str) -> None:
         if event_type == "leader-host":
-            # An empty payload is the server saying it no longer knows --
-            # e.g. the client for the host it believed held the leader just
-            # disconnected, taking the only source of evidence with it.
-            self.leader_host = int(data) if data else None
+            self.leader_host = int(data)
+            self.reconciler.poke()
+            self._publish_status()
+        elif event_type == "leader-host-unknown":
+            # The server no longer knows where the leader is: the client for
+            # the host it believed held the leader just disconnected, taking
+            # the only source of evidence with it.
+            logger.info(
+                "Host %s disconnected; the leader can no longer be assumed to be there",
+                data,
+            )
+            self.leader_host = None
             self.reconciler.poke()
             self._publish_status()
         elif event_type == "host-connected":

@@ -302,7 +302,7 @@ class FlowServerAPI(Flask):
             "up somewhere",
             host,
         )
-        self.events.clear_state("leader-host")
+        self.events.clear_state("leader-host-unknown", host)
         self._publish_status()
 
     def _reconciler_error(self, device: PairedDevice, error: Exception) -> None:

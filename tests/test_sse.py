@@ -177,38 +177,38 @@ class TestClearState:
         broadcaster = EventBroadcaster()
         broadcaster.set_state("leader-host", "2")
 
-        broadcaster.clear_state("leader-host")
+        broadcaster.clear_state("leader-host-unknown")
 
         assert broadcaster.state is None
 
-    def test_broadcasts_an_empty_payload_to_existing_subscribers(self):
+    def test_announces_the_clear_under_the_callers_event_name(self):
         broadcaster = EventBroadcaster()
         broadcaster.set_state("leader-host", "2")
         q, _ = broadcaster.subscribe()
 
-        broadcaster.clear_state("leader-host")
+        broadcaster.clear_state("leader-host-unknown", "2")
 
-        assert q.get_nowait() == "event: leader-host\ndata: \n\n"
+        assert q.get_nowait() == "event: leader-host-unknown\ndata: 2\n\n"
 
     def test_new_subscribers_get_no_snapshot_afterwards(self):
         broadcaster = EventBroadcaster()
         broadcaster.set_state("leader-host", "2")
 
-        broadcaster.clear_state("leader-host")
+        broadcaster.clear_state("leader-host-unknown")
         _, current = broadcaster.subscribe()
 
         assert current is None
 
-    def test_the_empty_payload_round_trips_back_to_an_empty_string(self):
-        # The wire representation of "unknown" has to survive the parser --
-        # `flow_client._handle_event` distinguishes it from a host number by
-        # its emptiness, so a parser that dropped the event entirely would
-        # leave clients acting on a belief the server just retracted.
+    def test_a_distinct_event_name_is_what_makes_old_clients_safe(self):
+        # A client too old to know this event ignores it and carries on with
+        # its previous belief. Reusing "leader-host" with an empty payload
+        # would instead hand such a client an empty string to parse as a
+        # host number -- which in 2.2.1 killed its event-stream thread.
         broadcaster = EventBroadcaster()
         q, _ = broadcaster.subscribe()
 
-        broadcaster.clear_state("leader-host")
+        broadcaster.clear_state("leader-host-unknown", "2")
 
         assert list(parse_sse_stream(q.get_nowait().split("\n"))) == [
-            ("leader-host", "")
+            ("leader-host-unknown", "2")
         ]
