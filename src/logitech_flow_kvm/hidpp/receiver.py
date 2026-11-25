@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import struct
 
 from .exceptions import ProtocolError
 from .models import DEVICE_KIND
@@ -8,6 +9,7 @@ from .models import ChangeHostInfo
 from .models import DirectDeviceInfo
 from .models import ReceiverInfo
 from .protocol import RECEIVER_DEVNUMBER
+from .protocol import ROOT_FEATURE_INDEX
 from .protocol import HidppConnection
 from .protocol import Transport
 from .transport import HidRawIO
@@ -32,6 +34,21 @@ FEATURE_CHANGE_HOST = 0x1814
 CHANGE_HOST_READ_FUNCTION = 0x00
 CHANGE_HOST_WRITE_FUNCTION = 0x10
 
+# DEVICE_FW_INFO.getDeviceInfo returns the device's unit ID in bytes 1..4.  A
+# Bolt receiver reports that same unit ID as the device's serial number, so
+# reading it over Bluetooth gives a device one identity on every host,
+# whichever way each host is connected to it.  Unlike the Bluetooth address,
+# the unit ID also survives re-pairing.
+FEATURE_DEVICE_FW_INFO = 0x0003
+DEVICE_FW_INFO_GET_DEVICE_INFO = 0x00
+UNIT_ID_TIMEOUT = 1.0
+UNIT_ID_ATTEMPTS = 2
+
+# Bluetooth address -> unit ID.  A device's unit ID never changes, and caching
+# it keeps a transient read failure on a later reconnect from flipping the
+# device's identity back to its Bluetooth address.
+_unit_id_cache: dict[str, str] = {}
+
 
 def _decode_codename(raw: bytes, *, length_offset: int, text_offset: int) -> str | None:
     length = raw[length_offset]
@@ -52,10 +69,20 @@ class PairedDevice:
     kind: str
     serial: str | None
     codename: str | None
+    # Other identifiers this same device has been known by, such as the
+    # Bluetooth address that identified a Bluetooth device before its unit ID
+    # was used.  Configuration written with an alias keeps matching.
+    aliases: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
         return self.serial or self.wpid
+
+    def has_id(self, device_id: str) -> bool:
+        wanted = device_id.upper()
+        return any(
+            candidate.upper() == wanted for candidate in (self.id, *self.aliases)
+        )
 
     @property
     def path(self) -> str:
@@ -263,14 +290,8 @@ class DirectDevice:
             else None
         )
         self._force_long = info.hidpp_long
-        self._device = PairedDevice(
-            receiver=self,
-            number=RECEIVER_DEVNUMBER,
-            wpid=f"{info.product_id:04X}",
-            kind="unknown",
-            serial=info.serial.upper() if info.serial else None,
-            codename=info.name,
-        )
+        self._info = info
+        self._device: PairedDevice | None = None
 
     def close(self) -> None:
         if self._io is not None:
@@ -288,13 +309,66 @@ class DirectDevice:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def get_device(self, number: int = RECEIVER_DEVNUMBER) -> PairedDevice | None:
-        if number in (1, RECEIVER_DEVNUMBER):
-            return self._device
+    def _read_unit_id(self) -> str | None:
+        """Read the unit ID that a Bolt receiver would report as the serial."""
+        connection = self._connection()
+        for _attempt in range(UNIT_ID_ATTEMPTS):
+            try:
+                index_reply = connection.request(
+                    RECEIVER_DEVNUMBER,
+                    ROOT_FEATURE_INDEX << 8,
+                    struct.pack("!H", FEATURE_DEVICE_FW_INFO),
+                    timeout=UNIT_ID_TIMEOUT,
+                )
+                if not index_reply:
+                    continue
+                if not index_reply[0]:
+                    return None
+                reply = connection.request(
+                    RECEIVER_DEVNUMBER,
+                    (index_reply[0] << 8) | DEVICE_FW_INFO_GET_DEVICE_INFO,
+                    timeout=UNIT_ID_TIMEOUT,
+                )
+            except ProtocolError:
+                return None
+            if not reply or len(reply) < 5:
+                continue
+            unit_id = reply[1:5]
+            if unit_id in (b"\x00" * 4, b"\xff" * 4):
+                return None
+            return unit_id.hex().upper()
         return None
 
+    def _build_device(self) -> PairedDevice:
+        address = self._info.serial.upper() if self._info.serial else None
+        unit_id = _unit_id_cache.get(address) if address else None
+        if unit_id is None:
+            try:
+                unit_id = self._read_unit_id()
+            except OSError:
+                unit_id = None
+            if unit_id is not None and address is not None:
+                _unit_id_cache[address] = unit_id
+        return PairedDevice(
+            receiver=self,
+            number=RECEIVER_DEVNUMBER,
+            wpid=f"{self.product_id:04X}",
+            kind="unknown",
+            serial=unit_id or address,
+            codename=self._info.name,
+            aliases=(address,) if unit_id and address else (),
+        )
+
+    def get_device(self, number: int = RECEIVER_DEVNUMBER) -> PairedDevice | None:
+        if number not in (1, RECEIVER_DEVNUMBER):
+            return None
+        if self._device is None:
+            self._device = self._build_device()
+        return self._device
+
     def enumerate_devices(self) -> list[PairedDevice]:
-        return [self._device]
+        device = self.get_device()
+        return [device] if device is not None else []
 
     def ping_device(
         self, number: int = RECEIVER_DEVNUMBER, *, timeout: float = 1.5

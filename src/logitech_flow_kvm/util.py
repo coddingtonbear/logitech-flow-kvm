@@ -112,8 +112,10 @@ def resolve_devices(
     found: dict[str, PairedDevice] = {}
     for receiver in receivers:
         for device in receiver.enumerate_devices():
-            if device.id in wanted:
-                found[device.id] = device
+            known = {candidate.upper() for candidate in (device.id, *device.aliases)}
+            for device_id in wanted:
+                if device_id.upper() in known:
+                    found[device_id] = device
 
     for device_id in wanted:
         if device_id not in found:

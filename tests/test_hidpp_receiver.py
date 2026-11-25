@@ -3,6 +3,7 @@ import struct
 from hidpp_fakes import ScriptedReply
 from hidpp_fakes import ScriptedTransport
 from hidpp_fakes import register_matcher
+from logitech_flow_kvm.hidpp import receiver as receiver_module
 from logitech_flow_kvm.hidpp.models import DirectDeviceInfo
 from logitech_flow_kvm.hidpp.models import ReceiverInfo
 from logitech_flow_kvm.hidpp.receiver import SUB_BOLT_PAIRING_INFO
@@ -239,7 +240,10 @@ class TestDirectDevice:
             bus_id=5,
             hidpp_long=True,
         )
-        transport = ScriptedTransport()
+        # A device without DEVICE_FW_INFO keeps its Bluetooth address as its id.
+        transport = ScriptedTransport(
+            [ScriptedReply(register_matcher(0xFF, b"\x00\x03"), b"\x00\x00\x00")]
+        )
         direct = DirectDevice(info, transport=transport)
 
         device = direct.get_device()
@@ -248,8 +252,74 @@ class TestDirectDevice:
         assert device.wpid == "B369"
         assert device.codename == "MX Keys Mini"
         assert device.serial == "D7:C3:34:36:65:DB"
+        assert device.aliases == ()
 
         direct.ping_device()
 
         assert transport.writes[0][0] == 0xFF
         assert transport.writes[0][2] is True
+
+
+def _unit_id_transport(unit_id_reply: bytes) -> ScriptedTransport:
+    def get_device_info(devnumber: int, payload: bytes) -> bool:
+        return devnumber == 0xFF and payload[0] == 0x02 and payload[2:] == b""
+
+    return ScriptedTransport(
+        [
+            # DEVICE_FW_INFO (0x0003) is at feature index 2.
+            ScriptedReply(register_matcher(0xFF, b"\x00\x03"), b"\x02\x00\x00"),
+            ScriptedReply(get_device_info, unit_id_reply),
+        ]
+    )
+
+
+class TestDirectDeviceUnitId:
+    INFO = DirectDeviceInfo(
+        path="/dev/hidraw2",
+        product_id=0xB369,
+        name="MX Keys Mini",
+        serial="d7:c3:34:36:65:e1",
+        bus_id=5,
+        hidpp_long=True,
+    )
+
+    def setup_method(self):
+        receiver_module._unit_id_cache.clear()
+
+    def test_uses_the_unit_id_a_bolt_receiver_reports_as_serial(self):
+        # A real MX Keys Mini getDeviceInfo reply; Bolt reports 694821BA.
+        transport = _unit_id_transport(
+            bytes.fromhex("03694821ba0002b36900000000020100")
+        )
+        device = DirectDevice(self.INFO, transport=transport).get_device()
+
+        assert device is not None
+        assert device.id == "694821BA"
+        assert device.aliases == ("D7:C3:34:36:65:E1",)
+        assert device.has_id("694821ba")
+        assert device.has_id("d7:c3:34:36:65:e1")
+        assert not device.has_id("D7:C3:34:36:65:DB")
+
+    def test_unit_id_is_remembered_across_reconnects(self):
+        transport = _unit_id_transport(
+            bytes.fromhex("03694821ba0002b36900000000020100")
+        )
+        DirectDevice(self.INFO, transport=transport).get_device()
+
+        # A later connection that cannot answer still keeps the same identity.
+        silent = ScriptedTransport(
+            [ScriptedReply(register_matcher(0xFF, b"\x00\x03"), b"\x00\x00\x00")]
+        )
+        device = DirectDevice(self.INFO, transport=silent).get_device()
+
+        assert device is not None
+        assert device.id == "694821BA"
+        assert silent.writes == []
+
+    def test_blank_unit_id_falls_back_to_the_address(self):
+        transport = _unit_id_transport(bytes.fromhex("0300000000"))
+        device = DirectDevice(self.INFO, transport=transport).get_device()
+
+        assert device is not None
+        assert device.id == "D7:C3:34:36:65:E1"
+        assert device.aliases == ()

@@ -798,7 +798,7 @@ class TestBindReceivers:
             follower_devices=[],
             local_receivers=[],
         )
-        new_follower = Mock(serial="FOLLOW01", id="FOLLOW01")
+        new_follower = Mock(serial="FOLLOW01", id="FOLLOW01", aliases=())
         receiver = Mock()
         receiver.enumerate_devices.return_value = [new_follower]
 

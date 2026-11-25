@@ -249,8 +249,8 @@ class TestStartBackgroundThreads:
 
 class TestBindReceivers:
     def test_swaps_in_rediscovered_devices(self, app):
-        new_leader = Mock(id="LEADER01")
-        new_follower = Mock(id="FOLLOW01")
+        new_leader = Mock(id="LEADER01", aliases=())
+        new_follower = Mock(id="FOLLOW01", aliases=())
         receiver = Mock()
         receiver.enumerate_devices.return_value = [new_leader, new_follower]
 
@@ -263,7 +263,7 @@ class TestBindReceivers:
         assert app._leader_connected is False
 
     def test_raises_while_a_wanted_device_is_still_missing(self, app):
-        new_leader = Mock(id="LEADER01")
+        new_leader = Mock(id="LEADER01", aliases=())
         receiver = Mock()
         receiver.enumerate_devices.return_value = [new_leader]
 

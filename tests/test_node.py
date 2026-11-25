@@ -25,6 +25,32 @@ def test_local_leader_connection_announces_this_host():
     assert sent.target_host == 2
 
 
+def test_leader_configured_by_bluetooth_address_matches_its_unit_id():
+    node = FlowNode(NodeConfig(2, "D7:C3:34:36:65:E2", ["MOUSE"]), "secret")
+    node.devices = Mock()
+    node.devices.canonical_id.side_effect = lambda device_id: (
+        "694821BA" if device_id == "D7:C3:34:36:65:E2" else device_id
+    )
+    node.transport = Mock()
+    node._transport_started = True
+
+    node._device_connected("694821BA")
+
+    sent = cast(Mock, node.transport.send).call_args.args[0]
+    assert sent.target_host == 2
+
+
+def test_host_number_outside_easy_switch_range_is_reported():
+    node = make_node()
+    node.config = NodeConfig(58405840, "KEYS-LOCAL", ["MOUSE-LOCAL"])
+    node._announcer = Mock()
+
+    node.start()
+
+    assert node.last_problem is not None
+    assert "58405840" in node.last_problem
+
+
 def test_follower_connection_does_not_announce_a_host_change():
     node = make_node()
 

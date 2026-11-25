@@ -70,3 +70,16 @@ def test_monitor_mccs_and_feature_60_values_are_selectable():
             assert app.query_one("#monitor-input-0", Select).value == 0x11
 
     run(body())
+
+
+def test_host_number_must_be_an_easy_switch_channel():
+    async def body():
+        current = NodeConfig(58405840584058405840, "KEYS", ["MOUSE"])
+        app = NodeSetupApp(lambda: [], current)
+        async with app.run_test():
+            app._save()
+            problem = str(app.query_one("#problem", Label).render())
+            assert "Easy-Switch channel" in problem
+            assert app.return_value is None
+
+    run(body())

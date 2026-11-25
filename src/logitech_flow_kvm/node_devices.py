@@ -68,6 +68,11 @@ class NodeDeviceManager:
         self._devices: dict[str, PairedDevice] = {}
         self._connected: set[str] = set()
         self._direct_ids: set[str] = set()
+        # Every identifier a device has been seen under -> its current id.
+        # Deliberately kept across refreshes: a configuration written with a
+        # Bluetooth address must still recognise the device's disconnection
+        # after its hidraw node (and so the device) has disappeared.
+        self._aliases: dict[str, str] = {}
         self._udev = HidrawUdevMonitor(self._udev_event)
         self._refresh_timer: threading.Timer | None = None
 
@@ -105,9 +110,19 @@ class NodeDeviceManager:
                 for device in self._devices.values()
             ]
 
+    def canonical_id(self, device_id: str) -> str:
+        """Return the id this manager reports for `device_id`.
+
+        Configuration may name a device by an older identifier (a Bluetooth
+        address rather than the unit ID shared with Bolt receivers).
+        """
+        with self._lock:
+            return self._aliases.get(device_id.upper(), device_id)
+
     def switch_connected(self, follower_ids: list[str], target_host: int) -> None:
         with self._lock:
-            for follower_id in follower_ids:
+            for configured_id in follower_ids:
+                follower_id = self.canonical_id(configured_id)
                 device = self._devices.get(follower_id)
                 if device is None or follower_id not in self._connected:
                     continue
@@ -141,6 +156,8 @@ class NodeDeviceManager:
                     devices = list(endpoint.enumerate_devices())
                 for device in devices:
                     self._devices[device.id] = device
+                    for alias in (device.id, *device.aliases):
+                        self._aliases[alias.upper()] = device.id
                     if isinstance(endpoint, DirectDevice):
                         self._direct_ids.add(device.id)
                         self._connected.add(device.id)

@@ -13,6 +13,7 @@ from textual.widgets import Label
 from textual.widgets import Select
 from textual.widgets import SelectionList
 
+from ..constants import MAX_HOST_NUMBER
 from ..monitors import Ddcutil
 from ..monitors import DdcutilError
 from ..monitors import Monitor
@@ -63,7 +64,7 @@ class NodeSetupApp(App[NodeConfig | None]):
             yield Label("Host number")
             yield Input(
                 value=str(self.current.host_number) if self.current else "",
-                placeholder="1",
+                placeholder=f"Easy-Switch channel, 1-{MAX_HOST_NUMBER}",
                 id="host-number",
                 type="integer",
             )
@@ -201,10 +202,13 @@ class NodeSetupApp(App[NodeConfig | None]):
         problem = self.query_one("#problem", Label)
         try:
             host_number = int(self.query_one("#host-number", Input).value)
-            if host_number < 1:
+            if not 1 <= host_number <= MAX_HOST_NUMBER:
                 raise ValueError
         except ValueError:
-            problem.update("Host number must be a positive integer.")
+            problem.update(
+                f"Host number must be this host's Easy-Switch channel "
+                f"(1-{MAX_HOST_NUMBER})."
+            )
             return
         leader = self.query_one("#leader", Select).value
         if leader is Select.NULL:

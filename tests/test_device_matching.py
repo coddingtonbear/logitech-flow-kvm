@@ -26,3 +26,9 @@ def test_does_not_guess_when_best_matches_are_ambiguous():
     remote = device("D7:8E:D4:61:21:EC")
     local = [device("D7:8E:D4:61:21:EA"), device("D7:8E:D4:61:21:EB")]
     assert match_device(remote, local) is None
+
+
+def test_bluetooth_unknown_kind_matches_receiver_reported_kind():
+    remote = device("694821BA", "B369", "unknown")
+    local = device("694821BA", "B369", "keyboard")
+    assert match_device(remote, [local]) == local

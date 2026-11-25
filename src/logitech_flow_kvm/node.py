@@ -79,6 +79,13 @@ class FlowNode:
         self._transport_started = False
 
     def start(self) -> None:
+        if not 1 <= self.config.host_number <= constants.MAX_HOST_NUMBER:
+            self.last_problem = (
+                f"Host number {self.config.host_number} is not an Easy-Switch "
+                f"channel (1-{constants.MAX_HOST_NUMBER}); peers cannot switch "
+                "devices to this host. Fix it in setup."
+            )
+            logger.warning(self.last_problem)
         try:
             self.transport.start()
             self._transport_started = True
@@ -120,8 +127,14 @@ class FlowNode:
         with self._peer_lock:
             return list(self.peers.values())
 
+    def _is_leader(self, device_id: str) -> bool:
+        leader_id = self.config.leader_id
+        return (
+            device_id == leader_id or self.devices.canonical_id(leader_id) == device_id
+        )
+
     def _device_connected(self, device_id: str) -> None:
-        if device_id != self.config.leader_id:
+        if not self._is_leader(device_id):
             return
         now = time.monotonic()
         if now - self._last_leader_announcement < LEADER_EVENT_DEDUPLICATION_WINDOW:
@@ -174,7 +187,7 @@ class FlowNode:
             self._changed()
 
     def _device_disconnected(self, device_id: str) -> None:
-        if device_id != self.config.leader_id or not self.config.clipboard_enabled:
+        if not self._is_leader(device_id) or not self.config.clipboard_enabled:
             return
         try:
             clipboard = pyperclip.paste()

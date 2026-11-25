@@ -3,6 +3,7 @@ import re
 from .node_protocol import DeviceAdvertisement
 
 MINIMUM_ID_PREFIX = 8
+UNKNOWN_KIND = "unknown"
 
 
 def normalize_device_id(device_id: str) -> str:
@@ -29,7 +30,10 @@ def match_device(
     for device in local:
         if remote.product and device.product and remote.product != device.product:
             continue
-        if remote.kind and device.kind and remote.kind != device.kind:
+        # A Bluetooth device does not report its kind, while the same device
+        # behind a receiver does; only two known kinds can rule a match out.
+        kinds = {remote.kind, device.kind} - {"", UNKNOWN_KIND}
+        if len(kinds) > 1:
             continue
         prefix = common_prefix_length(remote.id, device.id)
         if prefix >= MINIMUM_ID_PREFIX:

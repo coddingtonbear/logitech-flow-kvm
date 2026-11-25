@@ -111,7 +111,9 @@ switch it to this computer and choose **Refresh devices**.
 Configure each computer as follows:
 
 1. Start `flow-node` in a terminal.
-2. Enter the host number printed on the Logitech device's host-selection key.
+2. Enter the host number printed on the Logitech device's host-selection key
+   (the Easy-Switch channel, 1-3). The keyboard and mouse must use the same
+   channel number for this computer.
 3. Select the keyboard whose host key will initiate switching as the leader.
 4. Select the mouse and any other devices that should follow it.
 5. For each detected monitor that should follow this host, select one of the
@@ -139,10 +141,23 @@ other node then switches only the configured followers that are connected to
 it at that moment. A follower which is currently on another host is therefore
 normal and never causes startup to fail.
 
-Bluetooth IDs may have a different final component on each host. Nodes exchange
-their detected device inventories and automatically correlate devices using
-product, kind, and the longest unambiguous normalized ID prefix. No manual ID
-mapping is required.
+A device is identified by its Logitech unit ID (for example `694821BA`), the
+same 8-digit ID whether it is reached through a Bolt/Unifying receiver or
+directly over Bluetooth. Each host may therefore connect to the same keyboard
+and mouse differently -- for example through a Bolt receiver on one computer
+and Bluetooth on another -- and switching works between them. Because the
+unit ID does not change when a Bluetooth device is re-paired, a saved
+configuration also survives re-pairing.
+
+Configurations saved by older versions name Bluetooth devices by their
+Bluetooth address (for example `D7:C3:34:36:65:E1`). Those keep working: the
+address is still recognised as the same device. Re-running setup replaces it
+with the unit ID. If a Bluetooth device does not answer the unit ID request,
+it falls back to its Bluetooth address.
+
+Nodes exchange their detected device inventories and automatically correlate
+devices using product, kind, and the longest unambiguous normalized ID prefix.
+No manual ID mapping is required.
 
 ## What happens during a switch
 
